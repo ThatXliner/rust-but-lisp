@@ -1,7 +1,18 @@
 use crate::ast::Expr;
+use std::cell::RefCell;
+
+thread_local! {
+    static WARNINGS: RefCell<Vec<String>> = RefCell::new(Vec::new());
+}
+
+fn warn(msg: impl Into<String>) {
+    WARNINGS.with(|w| w.borrow_mut().push(msg.into()));
+}
 
 /// Compile a list of top-level s-expressions into Rust source code.
-pub fn compile(exprs: &[Expr]) -> String {
+/// Returns the generated Rust code and any compile warnings.
+pub fn compile(exprs: &[Expr]) -> (String, Vec<String>) {
+    WARNINGS.with(|w| w.borrow_mut().clear());
     let mut out = String::new();
     for (i, expr) in exprs.iter().enumerate() {
         if i > 0 {
@@ -9,7 +20,8 @@ pub fn compile(exprs: &[Expr]) -> String {
         }
         out.push_str(&compile_top_level(expr));
     }
-    out
+    let warnings = WARNINGS.with(|w| w.borrow_mut().drain(..).collect());
+    (out, warnings)
 }
 
 /// Compile a top-level expression (items like fn, struct, enum, etc.).
@@ -92,7 +104,14 @@ fn compile_expr(expr: &Expr) -> String {
     match expr {
         Expr::Symbol(s) => s.clone(),
         Expr::Number(n) => n.replace('_', ""),
-        Expr::StringLit(s) => s.clone(),
+        Expr::StringLit(s) => {
+            // Emit a Rust string literal with proper escaping.
+            // The stored StringLit includes surrounding quotes; strip them
+            // and re-escape for Rust output.
+            let inner = &s[1..s.len() - 1]; // strip quotes
+            let content = unescape_lisp_string(inner);
+            format!("\"{}\"", escape_rust_string(&content))
+        }
         Expr::List(items) => compile_list(items),
     }
 }
@@ -136,7 +155,8 @@ fn compile_list(items: &[Expr]) -> String {
 /// Compile a function definition.
 fn compile_fn_def(args: &[Expr], vis: &str) -> String {
     if args.len() < 3 {
-        return format!("/* malformed fn: {:?} */", args);
+        warn("fn definition missing name, params, or return type");
+        return "/* malformed fn */".to_string();
     }
 
     let (name, rest) = (&args[0], &args[1..]);
@@ -218,7 +238,8 @@ fn compile_lambda(args: &[Expr]) -> String {
     };
 
     if i >= args.len() {
-        return format!("/* malformed lambda: {:?} */", args);
+        warn("lambda missing params or body");
+        return "|| {}".to_string();
     }
 
     // Parse params: (x y z) or ((x i32) (y i32))
@@ -270,6 +291,7 @@ fn compile_lambda(args: &[Expr]) -> String {
 /// Compile let binding.
 fn compile_let(args: &[Expr]) -> String {
     if args.is_empty() {
+        warn("let binding with no name or value");
         return "let _ = ();".to_string();
     }
 
@@ -285,6 +307,7 @@ fn compile_let(args: &[Expr]) -> String {
     }
 
     if i >= args.len() {
+        warn("let binding missing name after mut");
         return "let _ = ();".to_string();
     }
 
@@ -313,6 +336,7 @@ fn compile_let(args: &[Expr]) -> String {
 /// Compile struct definition.
 fn compile_struct(args: &[Expr], vis: &str) -> String {
     if args.is_empty() {
+        warn("struct definition missing name");
         return "struct _ {}".to_string();
     }
 
@@ -360,6 +384,7 @@ fn compile_struct_field(expr: &Expr) -> String {
 /// Compile enum definition.
 fn compile_enum(args: &[Expr], vis: &str) -> String {
     if args.is_empty() {
+        warn("enum definition missing name");
         return "enum _ {}".to_string();
     }
 
@@ -457,6 +482,7 @@ fn compile_pattern(expr: &Expr) -> String {
 /// Compile if expression.
 fn compile_if(args: &[Expr]) -> String {
     if args.is_empty() {
+        warn("if expression with no condition or body");
         return "if true {}".to_string();
     }
 
@@ -464,6 +490,7 @@ fn compile_if(args: &[Expr]) -> String {
     let then_body = if args.len() >= 2 {
         compile_expr(&args[1])
     } else {
+        warn("if expression with no then-branch");
         "()".to_string()
     };
 
@@ -499,12 +526,14 @@ fn compile_loop(args: &[Expr]) -> String {
 /// Compile while expression: (while condition body...) → while condition { body... }
 fn compile_while(args: &[Expr]) -> String {
     if args.is_empty() {
+        warn("while expression with no condition or body");
         return "while true {}".to_string();
     }
 
     let cond = compile_expr(&args[0]);
     let body = compile_body(&args[1..]);
     if body.is_empty() {
+        warn("while expression with no body — use (loop) for infinite loops");
         format!("while {} {{}}", cond)
     } else {
         format!("while {} {{\n{}\n}}", cond, indent(&body))
@@ -514,6 +543,7 @@ fn compile_while(args: &[Expr]) -> String {
 /// Compile for expression: (for pattern in iterable body...) → for pattern in iterable { body... }
 fn compile_for(args: &[Expr]) -> String {
     if args.len() < 3 {
+        warn("for expression missing pattern, iterator, or body");
         return format!("/* malformed for: {:?} */", args);
     }
 
@@ -552,6 +582,7 @@ fn compile_for_pattern(expr: &Expr) -> String {
 /// Compile `impl` block.
 fn compile_impl_block(args: &[Expr]) -> String {
     if args.is_empty() {
+        warn("impl block missing type name");
         return "impl _ {}".to_string();
     }
 
@@ -574,7 +605,8 @@ fn compile_impl_block(args: &[Expr]) -> String {
         } else if args.len() >= 1 {
             (None, compile_expr(&args[0]), 1)
         } else {
-            return "impl _ {}".to_string();
+            warn("impl block missing type name");
+        return "impl _ {}".to_string();
         };
 
     let methods: Vec<String> = args[method_start..]
@@ -595,6 +627,7 @@ fn compile_impl_block(args: &[Expr]) -> String {
 /// Compile trait definition.
 fn compile_trait(args: &[Expr], vis: &str) -> String {
     if args.is_empty() {
+        warn("trait definition missing name");
         return "trait _ {}".to_string();
     }
 
@@ -614,6 +647,7 @@ fn compile_trait(args: &[Expr], vis: &str) -> String {
 /// (mod my_module) → mod my_module;
 fn compile_mod(args: &[Expr], vis: &str) -> String {
     if args.is_empty() {
+        warn("mod declaration missing name");
         return "mod _;".to_string();
     }
 
@@ -636,6 +670,7 @@ fn compile_mod(args: &[Expr], vis: &str) -> String {
 /// (use std::collections::HashMap as MyMap) → use std::collections::HashMap as MyMap;
 fn compile_use(args: &[Expr], vis: &str) -> String {
     if args.is_empty() {
+        warn("use declaration with no path");
         return "/* empty use */;".to_string();
     }
 
@@ -655,6 +690,7 @@ fn compile_use(args: &[Expr], vis: &str) -> String {
 /// (pub const MAX_SIZE usize 1024) → pub const MAX_SIZE: usize = 1024;
 fn compile_const(args: &[Expr], vis: &str) -> String {
     if args.len() < 3 {
+        warn("const declaration missing name, type, or value");
         return format!("/* malformed const: {:?} */", args);
     }
 
@@ -671,6 +707,7 @@ fn compile_const(args: &[Expr], vis: &str) -> String {
 /// (pub static COUNTER i32 0) → pub static COUNTER: i32 = 0;
 fn compile_static(args: &[Expr], vis: &str) -> String {
     if args.is_empty() {
+        warn("static declaration missing name, type, or value");
         return format!("/* malformed static: {:?} */", args);
     }
 
@@ -685,6 +722,7 @@ fn compile_static(args: &[Expr], vis: &str) -> String {
     }
 
     if i + 2 >= args.len() {
+        warn("static declaration missing name, type, or value");
         return format!("/* malformed static: {:?} */", args);
     }
 
@@ -881,6 +919,23 @@ fn compile_rust_block(args: &[Expr]) -> String {
     };
     // Strip trailing semicolons — compile_body will add its own for non-last expressions
     code.trim_end_matches(';').to_string()
+}
+
+/// Escape special characters for Rust string literal output.
+/// Converts literal newlines, tabs, etc. to their Rust escape sequences.
+fn escape_rust_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// Unescape basic LISP string escape sequences: \\\" → ", \\\\ → \\
