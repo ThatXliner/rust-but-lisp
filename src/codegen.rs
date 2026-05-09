@@ -19,17 +19,69 @@ fn compile_top_level(expr: &Expr) -> String {
             if items.is_empty() {
                 return String::new();
             }
+            let (vis, offset) = try_parse_visibility(items);
+            let items = &items[offset..];
+            if items.is_empty() {
+                return String::new();
+            }
             let head = &items[0];
             match head {
-                Expr::Symbol(s) if s == "fn" => compile_fn_def(&items[1..]),
-                Expr::Symbol(s) if s == "struct" => compile_struct(&items[1..]),
-                Expr::Symbol(s) if s == "enum" => compile_enum(&items[1..]),
-                Expr::Symbol(s) if s == "trait" => compile_trait(&items[1..]),
+                Expr::Symbol(s) if s == "fn" => compile_fn_def(&items[1..], &vis),
+                Expr::Symbol(s) if s == "struct" => compile_struct(&items[1..], &vis),
+                Expr::Symbol(s) if s == "enum" => compile_enum(&items[1..], &vis),
+                Expr::Symbol(s) if s == "trait" => compile_trait(&items[1..], &vis),
                 Expr::Symbol(s) if s == "impl" => compile_impl_block(&items[1..]),
+                Expr::Symbol(s) if s == "mod" => compile_mod(&items[1..], &vis),
+                Expr::Symbol(s) if s == "use" => compile_use(&items[1..], &vis),
                 _ => format!("{};", compile_expr(expr)),
             }
         }
         _ => format!("{};", compile_expr(expr)),
+    }
+}
+
+/// Try to parse a visibility modifier from the front of an item list.
+/// Returns (visibility_string, items_consumed).
+///
+/// Recognizes:
+///   pub              → "pub ", 1
+///   (pub crate)      → "pub(crate) ", 1
+///   (pub super)      → "pub(super) ", 1
+///   (pub (in path))  → "pub(in path) ", 1
+fn try_parse_visibility(items: &[Expr]) -> (String, usize) {
+    if items.is_empty() {
+        return (String::new(), 0);
+    }
+    match &items[0] {
+        Expr::Symbol(s) if s == "pub" => {
+            // Check for a visibility restriction list: (pub (crate) fn ...), (pub (super) fn ...)
+            if items.len() > 1 {
+                if let Expr::List(rest) = &items[1] {
+                    if !rest.is_empty() {
+                        let rest_str: Vec<String> =
+                            rest.iter().map(|e| compile_expr(e)).collect();
+                        return (format!("pub({}) ", rest_str.join(" ")), 2);
+                    }
+                }
+            }
+            ("pub ".to_string(), 1)
+        }
+        Expr::List(vis_items) if !vis_items.is_empty() => {
+            if let Expr::Symbol(head) = &vis_items[0] {
+                if head == "pub" {
+                    let rest: Vec<String> = vis_items[1..]
+                        .iter()
+                        .map(|e| compile_expr(e))
+                        .collect();
+                    if rest.is_empty() {
+                        return ("pub ".to_string(), 1);
+                    }
+                    return (format!("pub({}) ", rest.join(" ")), 1);
+                }
+            }
+            (String::new(), 0)
+        }
+        _ => (String::new(), 0),
     }
 }
 
@@ -75,7 +127,7 @@ fn compile_list(items: &[Expr]) -> String {
 }
 
 /// Compile a function definition.
-fn compile_fn_def(args: &[Expr]) -> String {
+fn compile_fn_def(args: &[Expr], vis: &str) -> String {
     if args.len() < 3 {
         return format!("/* malformed fn: {:?} */", args);
     }
@@ -86,10 +138,12 @@ fn compile_fn_def(args: &[Expr]) -> String {
 
     // Parse optional generics
     let generics = if i < rest.len() {
-        try_parse_generics(&rest[i]).map(|g| {
-            i += 1;
-            g
-        }).unwrap_or_default()
+        try_parse_generics(&rest[i])
+            .map(|g| {
+                i += 1;
+                g
+            })
+            .unwrap_or_default()
     } else {
         String::new()
     };
@@ -115,7 +169,8 @@ fn compile_fn_def(args: &[Expr]) -> String {
 
     if body.trim().is_empty() {
         format!(
-            "fn {}{}({}) -> {};",
+            "{}fn {}{}({}) -> {};",
+            vis,
             compile_expr(name),
             generics,
             params,
@@ -123,7 +178,8 @@ fn compile_fn_def(args: &[Expr]) -> String {
         )
     } else {
         format!(
-            "fn {}{}({}) -> {} {{\n{}\n}}",
+            "{}fn {}{}({}) -> {} {{\n{}\n}}",
+            vis,
             compile_expr(name),
             generics,
             params,
@@ -177,7 +233,7 @@ fn compile_let(args: &[Expr]) -> String {
 }
 
 /// Compile struct definition.
-fn compile_struct(args: &[Expr]) -> String {
+fn compile_struct(args: &[Expr], vis: &str) -> String {
     if args.is_empty() {
         return "struct _ {}".to_string();
     }
@@ -196,7 +252,8 @@ fn compile_struct(args: &[Expr]) -> String {
     let fields_str = fields.join(",\n    ");
 
     format!(
-        "struct {}{} {{\n    {}\n}}",
+        "{}struct {}{} {{\n    {}\n}}",
+        vis,
         compile_expr(name),
         generics,
         fields_str
@@ -204,12 +261,18 @@ fn compile_struct(args: &[Expr]) -> String {
 }
 
 /// Compile a struct field: (name type...) → name: type
+/// Supports field visibility: (pub x i32) → pub x: i32
 fn compile_struct_field(expr: &Expr) -> String {
     match expr {
         Expr::List(items) if items.len() >= 2 => {
+            let (vis, offset) = try_parse_visibility(items);
+            let items = &items[offset..];
+            if items.is_empty() {
+                return format!("_: ()");
+            }
             let name = compile_expr(&items[0]);
             let type_parts: Vec<String> = items[1..].iter().map(|e| compile_expr(e)).collect();
-            format!("{}: {}", name, type_parts.join(" "))
+            format!("{}{}: {}", vis, name, type_parts.join(" "))
         }
         Expr::Symbol(name) => format!("{}: ()", name),
         _ => format!("_: ()"),
@@ -217,7 +280,7 @@ fn compile_struct_field(expr: &Expr) -> String {
 }
 
 /// Compile enum definition.
-fn compile_enum(args: &[Expr]) -> String {
+fn compile_enum(args: &[Expr], vis: &str) -> String {
     if args.is_empty() {
         return "enum _ {}".to_string();
     }
@@ -236,7 +299,8 @@ fn compile_enum(args: &[Expr]) -> String {
     let variants_str = variants.join(",\n    ");
 
     format!(
-        "enum {}{} {{\n    {}\n}}",
+        "{}enum {}{} {{\n    {}\n}}",
+        vis,
         compile_expr(name),
         generics,
         variants_str
@@ -388,7 +452,7 @@ fn compile_impl_block(args: &[Expr]) -> String {
 }
 
 /// Compile trait definition.
-fn compile_trait(args: &[Expr]) -> String {
+fn compile_trait(args: &[Expr], vis: &str) -> String {
     if args.is_empty() {
         return "trait _ {}".to_string();
     }
@@ -400,11 +464,49 @@ fn compile_trait(args: &[Expr]) -> String {
         .collect();
 
     let methods_str = methods.join("\n\n");
-    // For trait method signatures (no body), add semicolons
-    // A fn def in a trait has no body and ends with ;
-    // We need to detect this... For now, we compile fn bodies and all
 
-    format!("trait {} {{\n{}\n}}", name, indent(&methods_str))
+    format!("{}trait {} {{\n{}\n}}", vis, name, indent(&methods_str))
+}
+
+/// Compile a `mod` declaration.
+/// (mod my_module body...) → mod my_module { body... }
+/// (mod my_module) → mod my_module;
+fn compile_mod(args: &[Expr], vis: &str) -> String {
+    if args.is_empty() {
+        return "mod _;".to_string();
+    }
+
+    let name = compile_expr(&args[0]);
+
+    if args.len() == 1 {
+        format!("{}mod {};", vis, name)
+    } else {
+        let body_items: Vec<String> = args[1..]
+            .iter()
+            .map(|e| compile_top_level(e))
+            .collect();
+        let body = body_items.join("\n\n");
+        format!("{}mod {} {{\n{}\n}}", vis, name, indent(&body))
+    }
+}
+
+/// Compile a `use` declaration.
+/// (use std::collections::HashMap) → use std::collections::HashMap;
+/// (use std::collections::HashMap as MyMap) → use std::collections::HashMap as MyMap;
+fn compile_use(args: &[Expr], vis: &str) -> String {
+    if args.is_empty() {
+        return "/* empty use */;".to_string();
+    }
+
+    let path: Vec<String> = args.iter().map(|e| match e {
+        Expr::StringLit(s) => {
+            // Strip surrounding quotes so raw path content can be embedded
+            s[1..s.len()-1].to_string()
+        }
+        _ => compile_expr(e),
+    }).collect();
+
+    format!("{}use {};", vis, path.join(" "))
 }
 
 /// Compile dot access: (. expr field) or (. expr method args...)
@@ -510,7 +612,13 @@ fn compile_params(expr: &Expr) -> String {
 /// Compile a param name, joining list elements with spaces (e.g., (&mut f) → "&mut f").
 fn compile_param_name(expr: &Expr) -> String {
     match expr {
-        Expr::List(items) => items.iter().map(|e| compile_expr(e)).collect::<Vec<_>>().join(" "),
+        Expr::List(items) => {
+            items
+                .iter()
+                .map(|e| compile_expr(e))
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
         _ => compile_expr(expr),
     }
 }
@@ -527,7 +635,9 @@ fn try_parse_generics(expr: &Expr) -> Option<String> {
                 1
             } else {
                 // Without `<` marker, use heuristic: all elements must look like type params
-                let all_params = items.iter().all(|e| matches!(e, Expr::Symbol(s) if is_type_param(s)));
+                let all_params = items
+                    .iter()
+                    .all(|e| matches!(e, Expr::Symbol(s) if is_type_param(s)));
                 if !all_params {
                     return None;
                 }
