@@ -112,6 +112,9 @@ fn compile_list(items: &[Expr]) -> String {
             "let" => return compile_let(&items[1..]),
             "if" => return compile_if(&items[1..]),
             "match" => return compile_match(&items[1..]),
+            "loop" => return compile_loop(&items[1..]),
+            "while" => return compile_while(&items[1..]),
+            "for" => return compile_for(&items[1..]),
             "." => return compile_dot(&items[1..]),
             "new" => return compile_struct_new(&items[1..]),
             "[]" => return compile_index(&items[1..]),
@@ -407,6 +410,69 @@ fn compile_if(args: &[Expr]) -> String {
         format!("if {} {} else {}", cond, then_block, else_block)
     } else {
         format!("if {} {}", cond, then_block)
+    }
+}
+
+/// Compile loop expression: (loop body...) → loop { body... }
+fn compile_loop(args: &[Expr]) -> String {
+    let body = compile_body(args);
+    if body.is_empty() {
+        "loop {}".to_string()
+    } else {
+        format!("loop {{\n{}\n}}", indent(&body))
+    }
+}
+
+/// Compile while expression: (while condition body...) → while condition { body... }
+fn compile_while(args: &[Expr]) -> String {
+    if args.is_empty() {
+        return "while true {}".to_string();
+    }
+
+    let cond = compile_expr(&args[0]);
+    let body = compile_body(&args[1..]);
+    if body.is_empty() {
+        format!("while {} {{}}", cond)
+    } else {
+        format!("while {} {{\n{}\n}}", cond, indent(&body))
+    }
+}
+
+/// Compile for expression: (for pattern in iterable body...) → for pattern in iterable { body... }
+fn compile_for(args: &[Expr]) -> String {
+    if args.len() < 3 {
+        return format!("/* malformed for: {:?} */", args);
+    }
+
+    let pattern = compile_for_pattern(&args[0]);
+    // args[1] should be "in"
+    let iter = compile_expr(&args[2]);
+    let body = compile_body(&args[3..]);
+    if body.is_empty() {
+        format!("for {} in {} {{}}", pattern, iter)
+    } else {
+        format!("for {} in {} {{\n{}\n}}", pattern, iter, indent(&body))
+    }
+}
+
+/// Compile the pattern portion of a for loop.
+/// (i x) → (i, x),  (Some(x)) → Some(x),  i → i
+fn compile_for_pattern(expr: &Expr) -> String {
+    match expr {
+        Expr::Symbol(s) => s.clone(),
+        Expr::List(items) if items.is_empty() => "()".to_string(),
+        Expr::List(items) => {
+            // If the head starts with uppercase, treat as enum variant pattern
+            if let Expr::Symbol(head) = &items[0] {
+                if head.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
+                    return compile_pattern(expr);
+                }
+            }
+            // Otherwise treat as tuple destructure: (i x y) → (i, x, y)
+            let parts: Vec<String> = items.iter().map(|e| compile_expr(e)).collect();
+            format!("({})", parts.join(", "))
+        }
+        _ => compile_expr(expr),
     }
 }
 
