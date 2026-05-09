@@ -39,6 +39,12 @@ enum Token {
 fn tokenize(source: &str) -> Vec<Token> {
     let mut tokens = Vec::new();
     let chars: Vec<char> = source.chars().collect();
+    // Map char index to byte offset for correct slicing of the original source.
+    let char_byte: Vec<usize> = source
+        .char_indices()
+        .map(|(byte, _)| byte)
+        .chain(std::iter::once(source.len()))
+        .collect();
     let mut i = 0;
 
     while i < chars.len() {
@@ -71,7 +77,7 @@ fn tokenize(source: &str) -> Vec<Token> {
 
         // String literals
         if c == '"' {
-            let start = i;
+            let start_byte = char_byte[i];
             i += 1;
             while i < chars.len() && chars[i] != '"' {
                 if chars[i] == '\\' {
@@ -82,12 +88,17 @@ fn tokenize(source: &str) -> Vec<Token> {
             if i < chars.len() {
                 i += 1; // closing quote
             }
-            tokens.push(Token::StringLit(source[start..i].to_string()));
+            let end_byte = if i < char_byte.len() {
+                char_byte[i]
+            } else {
+                source.len()
+            };
+            tokens.push(Token::StringLit(source[start_byte..end_byte].to_string()));
             continue;
         }
 
         // Symbols and numbers
-        let start = i;
+        let start_byte = char_byte[i];
         while i < chars.len()
             && !chars[i].is_whitespace()
             && chars[i] != '('
@@ -97,7 +108,12 @@ fn tokenize(source: &str) -> Vec<Token> {
         {
             i += 1;
         }
-        let s = source[start..i].to_string();
+        let end_byte = if i < char_byte.len() {
+            char_byte[i]
+        } else {
+            source.len()
+        };
+        let s = source[start_byte..end_byte].to_string();
 
         // Determine if it's a number
         if is_number(&s) {
