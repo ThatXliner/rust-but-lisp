@@ -815,7 +815,7 @@ fn compile_params(expr: &Expr) -> String {
                     Expr::List(parts) => {
                         let name = compile_param_name(&parts[0]);
                         let type_parts: Vec<String> =
-                            parts[1..].iter().map(compile_expr).collect();
+                            parts[1..].iter().map(compile_type_expr).collect();
                         format!("{}: {}", name, type_parts.join(" "))
                     }
                     _ => compile_expr(p),
@@ -1007,4 +1007,545 @@ fn indent(s: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser;
+
+    fn compile_first(src: &str) -> String {
+        let exprs = parser::parse(src).unwrap();
+        let (out, _warnings) = compile(&exprs);
+        out.trim().to_string()
+    }
+
+    fn warnings(src: &str) -> Vec<String> {
+        let exprs = parser::parse(src).unwrap();
+        let (_, w) = compile(&exprs);
+        w
+    }
+
+    // ——— fn definitions ———
+
+    #[test]
+    fn fn_with_no_body_is_semicolon() {
+        let out = compile_first("(fn foo () i32)");
+        assert_eq!(out, "fn foo() -> i32;");
+    }
+
+    #[test]
+    fn fn_with_body_is_block() {
+        let out = compile_first("(fn foo () i32 42)");
+        assert!(out.contains("fn foo() -> i32 {\n    42\n}"));
+    }
+
+    #[test]
+    fn fn_with_params() {
+        let out = compile_first("(fn add ((x i32) (y i32)) i32 (+ x y))");
+        assert!(out.contains("fn add(x: i32, y: i32) -> i32"));
+    }
+
+    #[test]
+    fn fn_with_generics() {
+        let out = compile_first("(fn first (< T) ((list &[T])) (Option &T) (None))");
+        assert!(out.contains("fn first<T>(list: &[T]) -> Option<&T>"));
+    }
+
+    #[test]
+    fn fn_with_self_param() {
+        let out = compile_first("(fn len ((&self)) usize 0)");
+        assert!(out.contains("fn len(&self) -> usize"));
+    }
+
+    #[test]
+    fn malformed_fn_warns() {
+        let w = warnings("(fn)");
+        assert!(w.iter().any(|m| m.contains("fn definition")));
+    }
+
+    // ——— struct ———
+
+    #[test]
+    fn struct_with_fields() {
+        let out = compile_first("(struct Point (x f64) (y f64))");
+        assert!(out.contains("struct Point {\n    x: f64,\n    y: f64\n}"));
+    }
+
+    #[test]
+    fn struct_with_generics() {
+        let out = compile_first("(struct Pair (T) (first T) (second T))");
+        assert!(out.contains("struct Pair<T>"));
+    }
+
+    #[test]
+    fn struct_field_with_visibility() {
+        let out = compile_first("(struct Config (pub host String) (port u16))");
+        assert!(out.contains("pub host: String"));
+        assert!(out.contains("port: u16"));
+    }
+
+    #[test]
+    fn malformed_struct_warns() {
+        let w = warnings("(struct)");
+        assert!(w.iter().any(|m| m.contains("struct")));
+    }
+
+    // ——— enum ———
+
+    #[test]
+    fn enum_with_variants() {
+        let out = compile_first("(enum Option (T) (Some T) None)");
+        assert!(out.contains("enum Option<T> {\n    Some(T),\n    None\n}"));
+    }
+
+    #[test]
+    fn malformed_enum_warns() {
+        let w = warnings("(enum)");
+        assert!(w.iter().any(|m| m.contains("enum")));
+    }
+
+    // ——— trait ———
+
+    #[test]
+    fn trait_with_method_sigs() {
+        let out = compile_first("(trait Greet (fn greet ((&self)) String))");
+        assert!(out.contains("trait Greet {\n    fn greet(&self) -> String;\n}"));
+    }
+
+    #[test]
+    fn malformed_trait_warns() {
+        let w = warnings("(trait)");
+        assert!(w.iter().any(|m| m.contains("trait")));
+    }
+
+    // ——— impl ———
+
+    #[test]
+    fn impl_with_methods() {
+        let out = compile_first("(impl Point (fn new ((x f64) (y f64)) Point (new Point (x x) (y y))))");
+        assert!(out.contains("impl Point {"));
+        assert!(out.contains("fn new(x: f64, y: f64) -> Point"));
+    }
+
+    #[test]
+    fn impl_trait_for_type() {
+        let out =
+            compile_first("(impl Display for Point (fn fmt ((&self) (f &mut Formatter)) (Result () Error)))");
+        assert!(out.contains("impl Display for Point {"));
+        assert!(out.contains("fn fmt(&self, f: &mut Formatter) -> Result<(), Error>;"));
+    }
+
+    #[test]
+    fn malformed_impl_warns() {
+        let w = warnings("(impl)");
+        assert!(w.iter().any(|m| m.contains("impl")));
+    }
+
+    // ——— let ———
+
+    #[test]
+    fn let_is_compiled() {
+        // With a trailing expression so the let gets a semicolon
+        let out = compile_first("(fn f () i32 (let x 42) x)");
+        assert!(out.contains("let x = 42;"));
+    }
+
+    #[test]
+    fn let_typed() {
+        let out = compile_first("(fn f () i32 (let x i32 42) x)");
+        assert!(out.contains("let x: i32 = 42;"));
+    }
+
+    #[test]
+    fn let_mut() {
+        let out = compile_first("(fn f () i32 (let mut x 0) x)");
+        assert!(out.contains("let mut x = 0;"));
+    }
+
+    #[test]
+    fn let_with_expression_value() {
+        let out = compile_first("(fn f () i32 (let x (+ 1 2)) x)");
+        assert!(out.contains("let x = (1 + 2);"));
+    }
+
+    #[test]
+    fn malformed_let_warns() {
+        let w = warnings("(fn f () () (let))");
+        assert!(w.iter().any(|m| m.contains("let")));
+    }
+
+    // ——— if ———
+
+    #[test]
+    fn if_with_else() {
+        let out =
+            compile_first("(fn f () () (if (> x 0) (println! \"pos\") (println! \"neg\")))");
+        assert!(out.contains("if (x > 0) { println!(\"pos\") } else { println!(\"neg\") }"));
+    }
+
+    #[test]
+    fn if_without_else() {
+        let out = compile_first("(fn f () () (if (> x 0) (println! \"pos\")))");
+        assert!(out.contains("if (x > 0)"));
+        assert!(!out.contains("else"));
+    }
+
+    #[test]
+    fn malformed_if_warns() {
+        let w = warnings("(fn f () () (if))");
+        assert!(w.iter().any(|m| m.contains("if")));
+    }
+
+    // ——— match ———
+
+    #[test]
+    fn match_with_arms_compiles() {
+        let out =
+            compile_first("(fn f ((opt (Option i32))) () (match opt ((Some x) (print x)) (None ())))");
+        assert!(out.contains("match opt {"));
+        assert!(out.contains("Some(x) => { print(x) }"));
+    }
+
+    #[test]
+    fn match_underscore_pattern() {
+        let out = compile_first("(fn f ((x i32)) () (match x (_ ()) (0 ())))");
+        assert!(out.contains("_ => "));
+    }
+
+    // ——— loop / while / for ———
+
+    #[test]
+    fn loop_expression() {
+        let out = compile_first("(fn f () () (loop (println! \"tick\") (break)))");
+        assert!(out.contains("loop {"));
+        assert!(out.contains("println!(\"tick\");"));
+        assert!(out.contains("break()"));
+    }
+
+    #[test]
+    fn while_expression() {
+        let out = compile_first("(fn f () () (while (> x 0) (-= x 1)))");
+        assert!(out.contains("while (x > 0) {"));
+        assert!(out.contains("(x -= 1)"));
+    }
+
+    #[test]
+    fn while_with_no_body_warns() {
+        let w = warnings("(fn f () () (while (> x 0)))");
+        assert!(w.iter().any(|m| m.contains("no body")));
+    }
+
+    #[test]
+    fn for_expression() {
+        let out =
+            compile_first("(fn f ((v &[i32])) () (for x in v (println! \"{}\" x)))");
+        assert!(out.contains("for x in v {"));
+    }
+
+    #[test]
+    fn for_with_tuple_destructure() {
+        let out = compile_first(
+            "(fn f ((iter (SomeIter))) () (for (i x) in iter (println! \"{}\" i)))",
+        );
+        assert!(out.contains("for (i, x) in iter {"));
+    }
+
+    #[test]
+    fn empty_loop_is_valid() {
+        let out = compile_first("(fn f () () (loop))");
+        assert!(out.contains("loop {}"));
+    }
+
+    // ——— closures ———
+
+    #[test]
+    fn lambda_untyped() {
+        let out = compile_first("(fn f () i32 (let add (lambda (x y) (+ x y))) (add 1 2))");
+        assert!(out.contains("|x, y| {\n        (x + y)\n    }"));
+    }
+
+    #[test]
+    fn lambda_typed() {
+        let out = compile_first(
+            "(fn f () i32 (let mul (lambda ((x i32) (y i32)) i32 (* x y))) (mul 3 4))",
+        );
+        assert!(out.contains("|x: i32, y: i32| -> i32 {"));
+    }
+
+    #[test]
+    fn lambda_move() {
+        let out = compile_first("(fn f () () (let s \"hi\") (let g (lambda move () s)) (print (g)))");
+        assert!(out.contains("move |"));
+    }
+
+    #[test]
+    fn lambda_no_params() {
+        let out = compile_first("(fn f () i32 (let c (lambda () 42)) (c))");
+        assert!(out.contains("|| {"));
+    }
+
+    // ——— visibility ———
+
+    #[test]
+    fn pub_fn() {
+        let out = compile_first("(pub fn foo () i32 42)");
+        assert!(out.starts_with("pub fn foo"));
+    }
+
+    #[test]
+    fn pub_crate_fn() {
+        let out = compile_first("(pub (crate) fn foo () i32 42)");
+        assert!(out.starts_with("pub(crate) fn foo"));
+    }
+
+    #[test]
+    fn pub_super_fn() {
+        let out = compile_first("(pub (super) fn foo () i32 42)");
+        assert!(out.starts_with("pub(super) fn foo"));
+    }
+
+    #[test]
+    fn pub_struct() {
+        let out = compile_first("(pub struct Point (x i32))");
+        assert!(out.starts_with("pub struct Point"));
+    }
+
+    #[test]
+    fn pub_enum() {
+        let out = compile_first("(pub enum Status Ok Err)");
+        assert!(out.starts_with("pub enum Status"));
+    }
+
+    #[test]
+    fn pub_trait() {
+        let out = compile_first("(pub trait Foo (fn bar () ()))");
+        assert!(out.starts_with("pub trait Foo"));
+    }
+
+    // ——— mod / use ———
+
+    #[test]
+    fn mod_declaration() {
+        let out = compile_first("(mod mymod)");
+        assert_eq!(out, "mod mymod;");
+    }
+
+    #[test]
+    fn mod_with_body() {
+        let out = compile_first("(mod mymod (fn helper () i32 1))");
+        assert!(out.contains("mod mymod {"));
+        assert!(out.contains("fn helper() -> i32 {"));
+    }
+
+    #[test]
+    fn pub_mod() {
+        let out = compile_first("(pub mod mymod (fn f () () ()))");
+        assert!(out.starts_with("pub mod mymod {"));
+    }
+
+    #[test]
+    fn use_single_path() {
+        let out = compile_first("(use std::collections::HashMap)");
+        assert_eq!(out, "use std::collections::HashMap;");
+    }
+
+    #[test]
+    fn use_with_as() {
+        let out = compile_first("(use std::fmt::Display as Fmt)");
+        assert_eq!(out, "use std::fmt::Display as Fmt;");
+    }
+
+    #[test]
+    fn use_with_braces() {
+        let out = compile_first("(use std::io::{self,Write})");
+        assert_eq!(out, "use std::io::{self,Write};");
+    }
+
+    #[test]
+    fn pub_use() {
+        let out = compile_first("(pub use std::collections::HashMap)");
+        assert_eq!(out, "pub use std::collections::HashMap;");
+    }
+
+    #[test]
+    fn malformed_mod_warns() {
+        let w = warnings("(mod)");
+        assert!(w.iter().any(|m| m.contains("mod")));
+    }
+
+    #[test]
+    fn malformed_use_warns() {
+        let w = warnings("(use)");
+        assert!(w.iter().any(|m| m.contains("use")));
+    }
+
+    // ——— const / static ———
+
+    #[test]
+    fn const_decl() {
+        let out = compile_first("(const MAX usize 1024)");
+        assert_eq!(out, "const MAX: usize = 1024;");
+    }
+
+    #[test]
+    fn static_decl() {
+        let out = compile_first("(static COUNTER i32 0)");
+        assert_eq!(out, "static COUNTER: i32 = 0;");
+    }
+
+    #[test]
+    fn static_mut() {
+        let out = compile_first("(static mut STATE u64 42)");
+        assert_eq!(out, "static mut STATE: u64 = 42;");
+    }
+
+    #[test]
+    fn pub_const() {
+        let out = compile_first("(pub const GREETING &str \"hello\")");
+        assert_eq!(out, "pub const GREETING: &str = \"hello\";");
+    }
+
+    #[test]
+    fn malformed_const_warns() {
+        let w = warnings("(const)");
+        assert!(w.iter().any(|m| m.contains("const")));
+    }
+
+    #[test]
+    fn malformed_static_warns() {
+        let w = warnings("(static)");
+        assert!(w.iter().any(|m| m.contains("static")));
+    }
+
+    // ——— expressions ———
+
+    #[test]
+    fn do_block() {
+        let out = compile_first("(fn f () () (do (println! \"a\") (println! \"b\")))");
+        assert!(out.contains("println!(\"a\");"));
+        assert!(out.contains("println!(\"b\")"));
+    }
+
+    #[test]
+    fn dot_field_access() {
+        let out = compile_first("(fn f () f64 (. p x))");
+        assert!(out.contains("p.x"));
+    }
+
+    #[test]
+    fn dot_method_call() {
+        let out = compile_first("(fn f () f64 (. p distance (& other)))");
+        assert!(out.contains("p.distance(&(other)"));
+    }
+
+    #[test]
+    fn index_access() {
+        let out = compile_first("(fn f () i32 ([] arr 0))");
+        assert!(out.contains("arr[0]"));
+    }
+
+    #[test]
+    fn struct_construction() {
+        let out = compile_first("(fn f () Point (new Point (x 1.0) (y 2.0)))");
+        assert!(out.contains("Point { x: 1.0, y: 2.0 }"));
+    }
+
+    #[test]
+    fn binary_operator_infix() {
+        let out = compile_first("(fn f () i32 (+ a b))");
+        assert!(out.contains("(a + b)"));
+    }
+
+    #[test]
+    fn comparison_operator_infix() {
+        let out = compile_first("(fn f () bool (> x 0))");
+        assert!(out.contains("(x > 0)"));
+    }
+
+    #[test]
+    fn macro_call() {
+        let out = compile_first("(fn f () () (println! \"{}\" x))");
+        assert!(out.contains("println!(\"{}\", x)"));
+    }
+
+    #[test]
+    fn function_call() {
+        let out = compile_first("(fn f () i32 (foo a b))");
+        assert!(out.contains("foo(a, b)"));
+    }
+
+    #[test]
+    fn string_literal() {
+        let out = compile_first("(fn f () () (println! \"hello world\"))");
+        assert!(out.contains("\"hello world\""));
+    }
+
+    // ——— inline rust ———
+
+    #[test]
+    fn rust_block_string() {
+        let out = compile_first("(fn f () i32 (rust \"let x: i32 = 42; x\"))");
+        assert!(out.contains("let x: i32 = 42; x"));
+    }
+
+    #[test]
+    fn rust_block_strips_semicolons() {
+        let out =
+            compile_first("(fn f () () (rust \"let x = 5;\") (rust \"let y = 6;\"))");
+        assert!(!out.contains(";;"));
+    }
+
+    // ——— type expressions ———
+
+    #[test]
+    fn reference_type_param() {
+        let out = compile_first("(fn f ((x &i32)) () ())");
+        assert!(out.contains("x: &i32"));
+    }
+
+    #[test]
+    fn generic_type_param() {
+        let out = compile_first("(fn f ((x (Option i32))) () ())");
+        assert!(out.contains("x: Option<i32>"));
+    }
+
+    #[test]
+    fn reference_lifetime_param() {
+        let out = compile_first("(fn f ((s &'a str)) () ())");
+        assert!(out.contains("s: &'a str"));
+    }
+
+    #[test]
+    fn multi_generics_on_fn() {
+        let out = compile_first("(fn foo (< K V) ((k K) (v V)) () ())");
+        assert!(out.contains("fn foo<K, V>(k: K, v: V) -> ()"));
+    }
+
+    // ——— edge cases ———
+
+    #[test]
+    fn clean_code_has_no_warnings() {
+        let w = warnings("(fn main () () ())");
+        assert!(w.is_empty());
+    }
+
+    #[test]
+    fn multiple_top_level_items() {
+        let out = compile_first("(struct A (x i32))\n(struct B (y f64))");
+        assert!(out.contains("struct A {"));
+        assert!(out.contains("struct B {"));
+    }
+
+    #[test]
+    fn multiple_warnings_collected() {
+        let w = warnings("(struct)\n(enum)");
+        assert!(w.len() >= 2);
+    }
+
+    #[test]
+    fn empty_input() {
+        let (out, _) = compile(&[]);
+        assert!(out.is_empty());
+    }
 }
