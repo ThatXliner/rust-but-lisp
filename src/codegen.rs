@@ -33,6 +33,8 @@ fn compile_top_level(expr: &Expr) -> String {
                 Expr::Symbol(s) if s == "impl" => compile_impl_block(&items[1..]),
                 Expr::Symbol(s) if s == "mod" => compile_mod(&items[1..], &vis),
                 Expr::Symbol(s) if s == "use" => compile_use(&items[1..], &vis),
+                Expr::Symbol(s) if s == "const" => compile_const(&items[1..], &vis),
+                Expr::Symbol(s) if s == "static" => compile_static(&items[1..], &vis),
                 _ => format!("{};", compile_expr(expr)),
             }
         }
@@ -110,6 +112,9 @@ fn compile_list(items: &[Expr]) -> String {
             "let" => return compile_let(&items[1..]),
             "if" => return compile_if(&items[1..]),
             "match" => return compile_match(&items[1..]),
+            "loop" => return compile_loop(&items[1..]),
+            "while" => return compile_while(&items[1..]),
+            "for" => return compile_for(&items[1..]),
             "." => return compile_dot(&items[1..]),
             "new" => return compile_struct_new(&items[1..]),
             "[]" => return compile_index(&items[1..]),
@@ -408,6 +413,69 @@ fn compile_if(args: &[Expr]) -> String {
     }
 }
 
+/// Compile loop expression: (loop body...) → loop { body... }
+fn compile_loop(args: &[Expr]) -> String {
+    let body = compile_body(args);
+    if body.is_empty() {
+        "loop {}".to_string()
+    } else {
+        format!("loop {{\n{}\n}}", indent(&body))
+    }
+}
+
+/// Compile while expression: (while condition body...) → while condition { body... }
+fn compile_while(args: &[Expr]) -> String {
+    if args.is_empty() {
+        return "while true {}".to_string();
+    }
+
+    let cond = compile_expr(&args[0]);
+    let body = compile_body(&args[1..]);
+    if body.is_empty() {
+        format!("while {} {{}}", cond)
+    } else {
+        format!("while {} {{\n{}\n}}", cond, indent(&body))
+    }
+}
+
+/// Compile for expression: (for pattern in iterable body...) → for pattern in iterable { body... }
+fn compile_for(args: &[Expr]) -> String {
+    if args.len() < 3 {
+        return format!("/* malformed for: {:?} */", args);
+    }
+
+    let pattern = compile_for_pattern(&args[0]);
+    // args[1] should be "in"
+    let iter = compile_expr(&args[2]);
+    let body = compile_body(&args[3..]);
+    if body.is_empty() {
+        format!("for {} in {} {{}}", pattern, iter)
+    } else {
+        format!("for {} in {} {{\n{}\n}}", pattern, iter, indent(&body))
+    }
+}
+
+/// Compile the pattern portion of a for loop.
+/// (i x) → (i, x),  (Some(x)) → Some(x),  i → i
+fn compile_for_pattern(expr: &Expr) -> String {
+    match expr {
+        Expr::Symbol(s) => s.clone(),
+        Expr::List(items) if items.is_empty() => "()".to_string(),
+        Expr::List(items) => {
+            // If the head starts with uppercase, treat as enum variant pattern
+            if let Expr::Symbol(head) = &items[0] {
+                if head.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
+                    return compile_pattern(expr);
+                }
+            }
+            // Otherwise treat as tuple destructure: (i x y) → (i, x, y)
+            let parts: Vec<String> = items.iter().map(|e| compile_expr(e)).collect();
+            format!("({})", parts.join(", "))
+        }
+        _ => compile_expr(expr),
+    }
+}
+
 /// Compile `impl` block.
 fn compile_impl_block(args: &[Expr]) -> String {
     if args.is_empty() {
@@ -507,6 +575,52 @@ fn compile_use(args: &[Expr], vis: &str) -> String {
     }).collect();
 
     format!("{}use {};", vis, path.join(" "))
+}
+
+/// Compile a `const` declaration.
+/// (const MAX_SIZE usize 1024) → const MAX_SIZE: usize = 1024;
+/// (pub const MAX_SIZE usize 1024) → pub const MAX_SIZE: usize = 1024;
+fn compile_const(args: &[Expr], vis: &str) -> String {
+    if args.len() < 3 {
+        return format!("/* malformed const: {:?} */", args);
+    }
+
+    let name = compile_expr(&args[0]);
+    let ty = compile_type_expr(&args[1]);
+    let val = compile_expr(&args[2]);
+
+    format!("{}const {}: {} = {};", vis, name, ty, val)
+}
+
+/// Compile a `static` declaration.
+/// (static COUNTER i32 0) → static COUNTER: i32 = 0;
+/// (static mut COUNTER i32 0) → static mut COUNTER: i32 = 0;
+/// (pub static COUNTER i32 0) → pub static COUNTER: i32 = 0;
+fn compile_static(args: &[Expr], vis: &str) -> String {
+    if args.is_empty() {
+        return format!("/* malformed static: {:?} */", args);
+    }
+
+    let mut i = 0;
+    let mut mutable = false;
+
+    if let Expr::Symbol(s) = &args[0] {
+        if s == "mut" {
+            mutable = true;
+            i = 1;
+        }
+    }
+
+    if i + 2 >= args.len() {
+        return format!("/* malformed static: {:?} */", args);
+    }
+
+    let name = compile_expr(&args[i]);
+    let ty = compile_type_expr(&args[i + 1]);
+    let val = compile_expr(&args[i + 2]);
+
+    let mut_str = if mutable { "mut " } else { "" };
+    format!("{}static {}{}: {} = {};", vis, mut_str, name, ty, val)
 }
 
 /// Compile dot access: (. expr field) or (. expr method args...)
