@@ -115,6 +115,7 @@ fn compile_list(items: &[Expr]) -> String {
             "loop" => return compile_loop(&items[1..]),
             "while" => return compile_while(&items[1..]),
             "for" => return compile_for(&items[1..]),
+            "lambda" => return compile_lambda(&items[1..]),
             "." => return compile_dot(&items[1..]),
             "new" => return compile_struct_new(&items[1..]),
             "[]" => return compile_index(&items[1..]),
@@ -192,6 +193,77 @@ fn compile_fn_def(args: &[Expr], vis: &str) -> String {
             indent(&body)
         )
     }
+}
+
+/// Compile a closure expression.
+///
+/// (lambda (x y) (+ x y))                           => |x, y| { (x + y) }
+/// (lambda ((x i32) (y i32)) i32 (+ x y))           => |x: i32, y: i32| -> i32 { (x + y) }
+/// (lambda move (x) x)                              => move |x| { x }
+/// (lambda move ((x i32) (y i32)) i32 (+ x y))      => move |x: i32, y: i32| -> i32 { (x + y) }
+fn compile_lambda(args: &[Expr]) -> String {
+    if args.is_empty() {
+        return "|| {}".to_string();
+    }
+
+    let mut i = 0;
+
+    // Check for `move` keyword
+    let move_kw = if matches!(&args[0], Expr::Symbol(s) if s == "move") {
+        i += 1;
+        "move "
+    } else {
+        ""
+    };
+
+    if i >= args.len() {
+        return format!("/* malformed lambda: {:?} */", args);
+    }
+
+    // Parse params: (x y z) or ((x i32) (y i32))
+    let typed = match &args[i] {
+        Expr::List(params) if !params.is_empty() => {
+            matches!(&params[0], Expr::List(_))
+        }
+        _ => false,
+    };
+
+    let params = if typed {
+        compile_params(&args[i])
+    } else {
+        // Untyped: just join symbols
+        match &args[i] {
+            Expr::List(params) => {
+                params.iter().map(|p| compile_expr(p)).collect::<Vec<_>>().join(", ")
+            }
+            _ => compile_expr(&args[i]),
+        }
+    };
+    i += 1;
+
+    // Parse optional return type (only for typed params)
+    let ret_type = if typed && i < args.len() {
+        // If there's more than one expr left, the next is the return type
+        if i + 1 < args.len() {
+            let ret = compile_type_expr(&args[i]);
+            i += 1;
+            format!(" -> {}", ret)
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+
+    // Parse body
+    let body = compile_body(&args[i..]);
+    let body_str = if body.is_empty() {
+        "{}".to_string()
+    } else {
+        format!("{{\n{}\n}}", indent(&body))
+    };
+
+    format!("{}|{}|{} {}", move_kw, params, ret_type, body_str)
 }
 
 /// Compile let binding.
