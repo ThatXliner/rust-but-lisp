@@ -116,6 +116,7 @@ fn compile_list(items: &[Expr]) -> String {
             "while" => return compile_while(&items[1..]),
             "for" => return compile_for(&items[1..]),
             "lambda" => return compile_lambda(&items[1..]),
+            "rust" => return compile_rust_block(&items[1..]),
             "." => return compile_dot(&items[1..]),
             "new" => return compile_struct_new(&items[1..]),
             "[]" => return compile_index(&items[1..]),
@@ -862,6 +863,48 @@ fn compile_index(args: &[Expr]) -> String {
     let expr = compile_expr(&args[0]);
     let indices: Vec<String> = args[1..].iter().map(|a| compile_expr(a)).collect();
     format!("{}[{}]", expr, indices.join(", "))
+}
+
+/// Compile an inline Rust block: (rust "raw_code") → raw_code
+/// The string content is emitted verbatim after unescaping. Also accepts bare symbols.
+fn compile_rust_block(args: &[Expr]) -> String {
+    if args.is_empty() {
+        return String::new();
+    }
+
+    let code = match &args[0] {
+        Expr::StringLit(s) => {
+            let inner = &s[1..s.len() - 1]; // strip quotes
+            unescape_lisp_string(inner)
+        }
+        _ => compile_expr(&args[0]),
+    };
+    // Strip trailing semicolons — compile_body will add its own for non-last expressions
+    code.trim_end_matches(';').to_string()
+}
+
+/// Unescape basic LISP string escape sequences: \\\" → ", \\\\ → \\
+fn unescape_lisp_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('"') => out.push('"'),
+                Some('\\') => out.push('\\'),
+                Some('n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// Compile struct construction: (new Type (field val) (field val)) → Type { field: val, field: val }
