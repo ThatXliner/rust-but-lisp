@@ -33,6 +33,8 @@ fn compile_top_level(expr: &Expr) -> String {
                 Expr::Symbol(s) if s == "impl" => compile_impl_block(&items[1..]),
                 Expr::Symbol(s) if s == "mod" => compile_mod(&items[1..], &vis),
                 Expr::Symbol(s) if s == "use" => compile_use(&items[1..], &vis),
+                Expr::Symbol(s) if s == "const" => compile_const(&items[1..], &vis),
+                Expr::Symbol(s) if s == "static" => compile_static(&items[1..], &vis),
                 _ => format!("{};", compile_expr(expr)),
             }
         }
@@ -507,6 +509,52 @@ fn compile_use(args: &[Expr], vis: &str) -> String {
     }).collect();
 
     format!("{}use {};", vis, path.join(" "))
+}
+
+/// Compile a `const` declaration.
+/// (const MAX_SIZE usize 1024) → const MAX_SIZE: usize = 1024;
+/// (pub const MAX_SIZE usize 1024) → pub const MAX_SIZE: usize = 1024;
+fn compile_const(args: &[Expr], vis: &str) -> String {
+    if args.len() < 3 {
+        return format!("/* malformed const: {:?} */", args);
+    }
+
+    let name = compile_expr(&args[0]);
+    let ty = compile_type_expr(&args[1]);
+    let val = compile_expr(&args[2]);
+
+    format!("{}const {}: {} = {};", vis, name, ty, val)
+}
+
+/// Compile a `static` declaration.
+/// (static COUNTER i32 0) → static COUNTER: i32 = 0;
+/// (static mut COUNTER i32 0) → static mut COUNTER: i32 = 0;
+/// (pub static COUNTER i32 0) → pub static COUNTER: i32 = 0;
+fn compile_static(args: &[Expr], vis: &str) -> String {
+    if args.is_empty() {
+        return format!("/* malformed static: {:?} */", args);
+    }
+
+    let mut i = 0;
+    let mut mutable = false;
+
+    if let Expr::Symbol(s) = &args[0] {
+        if s == "mut" {
+            mutable = true;
+            i = 1;
+        }
+    }
+
+    if i + 2 >= args.len() {
+        return format!("/* malformed static: {:?} */", args);
+    }
+
+    let name = compile_expr(&args[i]);
+    let ty = compile_type_expr(&args[i + 1]);
+    let val = compile_expr(&args[i + 2]);
+
+    let mut_str = if mutable { "mut " } else { "" };
+    format!("{}static {}{}: {} = {};", vis, mut_str, name, ty, val)
 }
 
 /// Compile dot access: (. expr field) or (. expr method args...)
