@@ -32,7 +32,11 @@ fn main() {
     });
 
     let expanded = r#macro::expand(&ast);
-    let rust_code = codegen::compile(&expanded);
+    let (rust_code, warnings) = codegen::compile(&expanded);
+
+    for w in &warnings {
+        eprintln!("warning: {}", w);
+    }
 
     let input_path = Path::new(input_path);
     let output_path = input_path.with_extension("rs");

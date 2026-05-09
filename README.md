@@ -66,15 +66,6 @@ Mostly for fun — an exploration of what Rust looks like when you strip away th
 - **Structural editing.** s-expressions are trivial to manipulate with editor tooling — slurp, barf, transpose, wrap. Every operation is balanced by construction.
 - **Homogeneous syntax.** No distinction between expressions, statements, types, and patterns. Everything is an s-expression. `match` arms and function signatures use the same syntax you already know.
 
-## What's not here yet
-
-- `defmacro` (compile-time macro definitions)
-- `loop` / `while` / `for`
-- Closures
-- `mod` / `use` / visibility
-- `const` / `static`
-- Inline Rust blocks
-
 ## License
 
 MIT
