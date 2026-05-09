@@ -55,8 +55,47 @@ rlisp run file.lisp       # transpile, compile, and run
 | `([] arr 0)` | `arr[0]` |
 | `(foo! args)` | `foo!(args)` |
 | `(println! "{}" x)` | `println!("{}", x)` |
+| `(loop (println! "tick"))` | `loop { println!("tick") }` |
+| `(while (> x 0) (-= x 1))` | `while x > 0 { x -= 1 }` |
+| `(for x in 0..10 (println! "{}" x))` | `for x in 0..10 { println!("{}", x) }` |
+| `(lambda (x y) (+ x y))` | `\|x, y\| { x + y }` |
+| `(pub fn foo () i32 42)` | `pub fn foo() -> i32 { 42 }` |
+| `(pub (crate) mod m (fn f () () ()))` | `pub(crate) mod m { fn f() {} }` |
+| `(use std::collections::HashMap)` | `use std::collections::HashMap;` |
+| `(const MAX usize 1024)` | `const MAX: usize = 1024;` |
+| `(rust "let x: i32 = 42; x")` | `let x: i32 = 42; x` |
 
 Binary operators (`+`, `-`, `*`, `/`, `==`, `!=`, `<`, `>`, `&&`, etc.) emit infix: `(+ a b)` → `(a + b)`.
+
+## Macros
+
+In rlisp, macros are compile-time functions that take s-expressions and return s-expressions — no `proc_macro` ceremony, just LISP-style `defmacro` with quasiquote:
+
+```lisp
+(defmacro when (condition &rest body)
+  (quasiquote (if (unquote condition) (do (unquote-splicing body)))))
+
+(defmacro double (x)
+  (quasiquote (+ (unquote x) (unquote x))))
+
+(fn main () ()
+  (let x 21)
+  (println! "Double: {}" (double x))
+  (when (> x 10)
+    (println! "x is greater than 10")
+    (println! "this too")))
+```
+
+## Inline Rust
+
+Drop into raw Rust with `(rust "...")` for anything rlisp doesn't yet express natively:
+
+```lisp
+(fn main () ()
+  (rust "let x: i32 = 42;")
+  (rust "let y = x as f64 * 3.14;")
+  (println! "y = {}" (rust "y")))
+```
 
 ## Why
 
