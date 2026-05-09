@@ -2,7 +2,7 @@ use crate::ast::Expr;
 use std::cell::RefCell;
 
 thread_local! {
-    static WARNINGS: RefCell<Vec<String>> = RefCell::new(Vec::new());
+    static WARNINGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
 fn warn(msg: impl Into<String>) {
@@ -69,30 +69,27 @@ fn try_parse_visibility(items: &[Expr]) -> (String, usize) {
     match &items[0] {
         Expr::Symbol(s) if s == "pub" => {
             // Check for a visibility restriction list: (pub (crate) fn ...), (pub (super) fn ...)
-            if items.len() > 1 {
-                if let Expr::List(rest) = &items[1] {
-                    if !rest.is_empty() {
+            if items.len() > 1
+                && let Expr::List(rest) = &items[1]
+                    && !rest.is_empty() {
                         let rest_str: Vec<String> =
-                            rest.iter().map(|e| compile_expr(e)).collect();
+                            rest.iter().map(compile_expr).collect();
                         return (format!("pub({}) ", rest_str.join(" ")), 2);
                     }
-                }
-            }
             ("pub ".to_string(), 1)
         }
         Expr::List(vis_items) if !vis_items.is_empty() => {
-            if let Expr::Symbol(head) = &vis_items[0] {
-                if head == "pub" {
+            if let Expr::Symbol(head) = &vis_items[0]
+                && head == "pub" {
                     let rest: Vec<String> = vis_items[1..]
                         .iter()
-                        .map(|e| compile_expr(e))
+                        .map(compile_expr)
                         .collect();
                     if rest.is_empty() {
                         return ("pub ".to_string(), 1);
                     }
                     return (format!("pub({}) ", rest.join(" ")), 1);
                 }
-            }
             (String::new(), 0)
         }
         _ => (String::new(), 0),
@@ -166,9 +163,8 @@ fn compile_fn_def(args: &[Expr], vis: &str) -> String {
     // Parse optional generics
     let generics = if i < rest.len() {
         try_parse_generics(&rest[i])
-            .map(|g| {
+            .inspect(|_| {
                 i += 1;
-                g
             })
             .unwrap_or_default()
     } else {
@@ -256,7 +252,7 @@ fn compile_lambda(args: &[Expr]) -> String {
         // Untyped: just join symbols
         match &args[i] {
             Expr::List(params) => {
-                params.iter().map(|p| compile_expr(p)).collect::<Vec<_>>().join(", ")
+                params.iter().map(compile_expr).collect::<Vec<_>>().join(", ")
             }
             _ => compile_expr(&args[i]),
         }
@@ -299,12 +295,11 @@ fn compile_let(args: &[Expr]) -> String {
     let mut mutable = false;
 
     // Check for `mut`
-    if let Expr::Symbol(s) = &args[0] {
-        if s == "mut" {
+    if let Expr::Symbol(s) = &args[0]
+        && s == "mut" {
             mutable = true;
             i += 1;
         }
-    }
 
     if i >= args.len() {
         warn("let binding missing name after mut");
@@ -344,13 +339,13 @@ fn compile_struct(args: &[Expr], vis: &str) -> String {
 
     // Parse optional generics
     let generics = if !rest.is_empty() {
-        try_parse_generics(&rest[0]).map(|g| g).unwrap_or_default()
+        try_parse_generics(&rest[0]).unwrap_or_default()
     } else {
         String::new()
     };
     let rest = if generics.is_empty() { rest } else { &rest[1..] };
 
-    let fields: Vec<String> = rest.iter().map(|f| compile_struct_field(f)).collect();
+    let fields: Vec<String> = rest.iter().map(compile_struct_field).collect();
     let fields_str = fields.join(",\n    ");
 
     format!(
@@ -370,14 +365,14 @@ fn compile_struct_field(expr: &Expr) -> String {
             let (vis, offset) = try_parse_visibility(items);
             let items = &items[offset..];
             if items.is_empty() {
-                return format!("_: ()");
+                return "_: ()".to_string();
             }
             let name = compile_expr(&items[0]);
-            let type_parts: Vec<String> = items[1..].iter().map(|e| compile_expr(e)).collect();
+            let type_parts: Vec<String> = items[1..].iter().map(compile_expr).collect();
             format!("{}{}: {}", vis, name, type_parts.join(" "))
         }
         Expr::Symbol(name) => format!("{}: ()", name),
-        _ => format!("_: ()"),
+        _ => "_: ()".to_string(),
     }
 }
 
@@ -392,13 +387,13 @@ fn compile_enum(args: &[Expr], vis: &str) -> String {
 
     // Parse optional generics
     let generics = if !rest.is_empty() {
-        try_parse_generics(&rest[0]).map(|g| g).unwrap_or_default()
+        try_parse_generics(&rest[0]).unwrap_or_default()
     } else {
         String::new()
     };
     let rest = if generics.is_empty() { rest } else { &rest[1..] };
 
-    let variants: Vec<String> = rest.iter().map(|v| compile_enum_variant(v)).collect();
+    let variants: Vec<String> = rest.iter().map(compile_enum_variant).collect();
     let variants_str = variants.join(",\n    ");
 
     format!(
@@ -415,7 +410,7 @@ fn compile_enum_variant(expr: &Expr) -> String {
     match expr {
         Expr::List(items) if !items.is_empty() => {
             let name = compile_expr(&items[0]);
-            let fields: Vec<String> = items[1..].iter().map(|e| compile_expr(e)).collect();
+            let fields: Vec<String> = items[1..].iter().map(compile_expr).collect();
             if fields.is_empty() {
                 name
             } else {
@@ -436,7 +431,7 @@ fn compile_match(args: &[Expr]) -> String {
     let value = compile_expr(&args[0]);
     let arms: Vec<String> = args[1..]
         .iter()
-        .map(|arm| compile_match_arm(arm))
+        .map(compile_match_arm)
         .collect();
     let arms_str = arms.join(",\n");
 
@@ -456,7 +451,7 @@ fn compile_match_arm(expr: &Expr) -> String {
             format!("{} => {{}}", pattern)
         }
         Expr::Symbol(s) => format!("{} => {{}}", s),
-        _ => format!("_ => {{}}"),
+        _ => "_ => {}".to_string(),
     }
 }
 
@@ -468,7 +463,7 @@ fn compile_pattern(expr: &Expr) -> String {
         Expr::List(items) if items.is_empty() => "()".to_string(),
         Expr::List(items) => {
             let head = compile_expr(&items[0]);
-            let rest: Vec<String> = items[1..].iter().map(|e| compile_pattern(e)).collect();
+            let rest: Vec<String> = items[1..].iter().map(compile_pattern).collect();
             if rest.is_empty() {
                 head
             } else {
@@ -566,13 +561,12 @@ fn compile_for_pattern(expr: &Expr) -> String {
         Expr::List(items) if items.is_empty() => "()".to_string(),
         Expr::List(items) => {
             // If the head starts with uppercase, treat as enum variant pattern
-            if let Expr::Symbol(head) = &items[0] {
-                if head.chars().next().map_or(false, |c| c.is_ascii_uppercase()) {
+            if let Expr::Symbol(head) = &items[0]
+                && head.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
                     return compile_pattern(expr);
                 }
-            }
             // Otherwise treat as tuple destructure: (i x y) → (i, x, y)
-            let parts: Vec<String> = items.iter().map(|e| compile_expr(e)).collect();
+            let parts: Vec<String> = items.iter().map(compile_expr).collect();
             format!("({})", parts.join(", "))
         }
         _ => compile_expr(expr),
@@ -602,7 +596,7 @@ fn compile_impl_block(args: &[Expr]) -> String {
             } else {
                 (None, compile_expr(&args[0]), 1)
             }
-        } else if args.len() >= 1 {
+        } else if !args.is_empty() {
             (None, compile_expr(&args[0]), 1)
         } else {
             warn("impl block missing type name");
@@ -611,7 +605,7 @@ fn compile_impl_block(args: &[Expr]) -> String {
 
     let methods: Vec<String> = args[method_start..]
         .iter()
-        .map(|m| compile_top_level(m))
+        .map(compile_top_level)
         .collect();
     let methods_str = methods.join("\n\n");
 
@@ -634,7 +628,7 @@ fn compile_trait(args: &[Expr], vis: &str) -> String {
     let name = compile_expr(&args[0]);
     let methods: Vec<String> = args[1..]
         .iter()
-        .map(|m| compile_top_level(m))
+        .map(compile_top_level)
         .collect();
 
     let methods_str = methods.join("\n\n");
@@ -658,7 +652,7 @@ fn compile_mod(args: &[Expr], vis: &str) -> String {
     } else {
         let body_items: Vec<String> = args[1..]
             .iter()
-            .map(|e| compile_top_level(e))
+            .map(compile_top_level)
             .collect();
         let body = body_items.join("\n\n");
         format!("{}mod {} {{\n{}\n}}", vis, name, indent(&body))
@@ -714,12 +708,11 @@ fn compile_static(args: &[Expr], vis: &str) -> String {
     let mut i = 0;
     let mut mutable = false;
 
-    if let Expr::Symbol(s) = &args[0] {
-        if s == "mut" {
+    if let Expr::Symbol(s) = &args[0]
+        && s == "mut" {
             mutable = true;
             i = 1;
         }
-    }
 
     if i + 2 >= args.len() {
         warn("static declaration missing name, type, or value");
@@ -749,14 +742,14 @@ fn compile_dot(args: &[Expr]) -> String {
     } else {
         // Method call: (. obj method args...)
         let method = compile_expr(&args[1]);
-        let call_args: Vec<String> = args[2..].iter().map(|a| compile_expr(a)).collect();
+        let call_args: Vec<String> = args[2..].iter().map(compile_expr).collect();
         format!("{}.{}({})", obj, method, call_args.join(", "))
     }
 }
 
 /// Compile a macro call: (foo! args...) → foo!(args...)
 fn compile_macro_call(name: &str, args: &[Expr]) -> String {
-    let args_str: Vec<String> = args.iter().map(|a| compile_expr(a)).collect();
+    let args_str: Vec<String> = args.iter().map(compile_expr).collect();
     format!("{}({})", name, args_str.join(", "))
 }
 
@@ -764,7 +757,7 @@ fn compile_macro_call(name: &str, args: &[Expr]) -> String {
 /// For known binary operators with 2 args, emits infix form: (+ a b) → (a + b)
 fn compile_fn_call(items: &[Expr]) -> String {
     let head = compile_expr(&items[0]);
-    let args: Vec<String> = items[1..].iter().map(|a| compile_expr(a)).collect();
+    let args: Vec<String> = items[1..].iter().map(compile_expr).collect();
 
     if is_binary_op(&head) && args.len() == 2 {
         return format!("({} {} {})", args[0], head, args[1]);
@@ -785,7 +778,7 @@ fn is_binary_op(s: &str) -> bool {
 }
 
 fn is_uppercase_type(s: &str) -> bool {
-    s.chars().next().map_or(false, |c| c.is_ascii_uppercase())
+    s.chars().next().is_some_and(|c| c.is_ascii_uppercase())
 }
 
 /// Compile a sequence of expressions as a block body.
@@ -822,7 +815,7 @@ fn compile_params(expr: &Expr) -> String {
                     Expr::List(parts) => {
                         let name = compile_param_name(&parts[0]);
                         let type_parts: Vec<String> =
-                            parts[1..].iter().map(|e| compile_expr(e)).collect();
+                            parts[1..].iter().map(compile_expr).collect();
                         format!("{}: {}", name, type_parts.join(" "))
                     }
                     _ => compile_expr(p),
@@ -840,7 +833,7 @@ fn compile_param_name(expr: &Expr) -> String {
         Expr::List(items) => {
             items
                 .iter()
-                .map(|e| compile_expr(e))
+                .map(compile_expr)
                 .collect::<Vec<_>>()
                 .join(" ")
         }
@@ -871,7 +864,7 @@ fn try_parse_generics(expr: &Expr) -> Option<String> {
             if start >= items.len() {
                 return Some(String::new());
             }
-            let params: Vec<String> = items[start..].iter().map(|e| compile_expr(e)).collect();
+            let params: Vec<String> = items[start..].iter().map(compile_expr).collect();
             Some(format!("<{}>", params.join(", ")))
         }
         Expr::Symbol(s) if s.starts_with('<') && s.ends_with('>') => Some(s.clone()),
@@ -884,7 +877,7 @@ fn is_type_param(s: &str) -> bool {
     if s.starts_with('\'') {
         return s.len() == 2; // 'a, 'b, etc.
     }
-    s.len() == 1 && s.chars().next().map_or(false, |c| c.is_ascii_uppercase())
+    s.len() == 1 && s.chars().next().is_some_and(|c| c.is_ascii_uppercase())
 }
 
 /// Compile do block: (do expr1 expr2) → { expr1; expr2 }
@@ -899,7 +892,7 @@ fn compile_index(args: &[Expr]) -> String {
         return "[]".to_string();
     }
     let expr = compile_expr(&args[0]);
-    let indices: Vec<String> = args[1..].iter().map(|a| compile_expr(a)).collect();
+    let indices: Vec<String> = args[1..].iter().map(compile_expr).collect();
     format!("{}[{}]", expr, indices.join(", "))
 }
 
@@ -987,7 +980,7 @@ fn compile_type_expr(expr: &Expr) -> String {
     match expr {
         Expr::List(items) if !items.is_empty() => {
             let first = compile_expr(&items[0]);
-            let rest: Vec<_> = items[1..].iter().map(|e| compile_expr(e)).collect();
+            let rest: Vec<_> = items[1..].iter().map(compile_expr).collect();
             if rest.is_empty() {
                 first
             } else if is_uppercase_type(&first) {

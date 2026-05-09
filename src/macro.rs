@@ -91,11 +91,10 @@ fn parse_macro_params(params: &[Expr]) -> (Vec<String>, bool, Option<String>) {
             Expr::Symbol(s) if s == "&rest" => {
                 has_rest = true;
                 // Next param is the rest collector
-                if i + 1 < params.len() {
-                    if let Expr::Symbol(name) = &params[i + 1] {
+                if i + 1 < params.len()
+                    && let Expr::Symbol(name) = &params[i + 1] {
                         rest_param = Some(name.clone());
                     }
-                }
                 break;
             }
             Expr::Symbol(s) => {
@@ -112,12 +111,11 @@ fn expand_expr(expr: &Expr, macros: &HashMap<String, Macro>) -> Expr {
     match expr {
         Expr::List(items) if !items.is_empty() => {
             // Check if the head is a macro
-            if let Expr::Symbol(head) = &items[0] {
-                if let Some(m) = macros.get(head) {
+            if let Expr::Symbol(head) = &items[0]
+                && let Some(m) = macros.get(head) {
                     let args = &items[1..];
                     return expand_macro_call(m, args, macros);
                 }
-            }
             // Otherwise, recursively expand sub-expressions
             Expr::List(items.iter().map(|e| expand_expr(e, macros)).collect())
         }
@@ -135,8 +133,8 @@ fn expand_macro_call(m: &Macro, args: &[Expr], macros: &HashMap<String, Macro>) 
         }
     }
 
-    if m.has_rest {
-        if let Some(ref rest_name) = m.rest_param {
+    if m.has_rest
+        && let Some(ref rest_name) = m.rest_param {
             let rest_start = m.params.len();
             let rest_args: Vec<Expr> = if rest_start < args.len() {
                 args[rest_start..].to_vec()
@@ -145,7 +143,6 @@ fn expand_macro_call(m: &Macro, args: &[Expr], macros: &HashMap<String, Macro>) 
             };
             bindings.insert(rest_name.clone(), Expr::List(rest_args));
         }
-    }
 
     // Expand the template body
     let expanded = expand_template(&m.body, &bindings);
@@ -163,30 +160,27 @@ fn expand_template(expr: &Expr, bindings: &HashMap<String, Expr>) -> Expr {
 
         Expr::List(items) => {
             // Check for (unquote name)
-            if items.len() == 2 {
-                if let Expr::Symbol(head) = &items[0] {
+            if items.len() == 2
+                && let Expr::Symbol(head) = &items[0] {
                     if head == "unquote" {
-                        if let Expr::Symbol(name) = &items[1] {
-                            if let Some(val) = bindings.get(name) {
+                        if let Expr::Symbol(name) = &items[1]
+                            && let Some(val) = bindings.get(name) {
                                 return val.clone();
                             }
-                        }
                         // If name not found, return as-is
                         return expr.clone();
                     }
                     if head == "unquote-splicing" {
-                        if let Expr::Symbol(name) = &items[1] {
-                            if let Some(val) = bindings.get(name) {
+                        if let Expr::Symbol(name) = &items[1]
+                            && let Some(val) = bindings.get(name) {
                                 return val.clone();
                             }
-                        }
                         return expr.clone();
                     }
                     if head == "quasiquote" {
                         return expand_template(&items[1], bindings);
                     }
                 }
-            }
 
             // Expand the list, handling splicing
             let mut expanded: Vec<Expr> = Vec::new();
@@ -200,9 +194,9 @@ fn expand_template(expr: &Expr, bindings: &HashMap<String, Expr>) -> Expr {
                 };
 
                 if is_splice {
-                    if let Expr::List(inner) = item {
-                        if let Expr::Symbol(name) = &inner[1] {
-                            if let Some(val) = bindings.get(name) {
+                    if let Expr::List(inner) = item
+                        && let Expr::Symbol(name) = &inner[1]
+                            && let Some(val) = bindings.get(name) {
                                 if let Expr::List(elems) = val {
                                     expanded.extend(elems.clone());
                                 } else {
@@ -210,8 +204,6 @@ fn expand_template(expr: &Expr, bindings: &HashMap<String, Expr>) -> Expr {
                                 }
                                 continue;
                             }
-                        }
-                    }
                     expanded.push(item.clone());
                 } else {
                     expanded.push(expand_template(item, bindings));

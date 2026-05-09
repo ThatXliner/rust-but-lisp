@@ -69,14 +69,32 @@ Binary operators (`+`, `-`, `*`, `/`, `==`, `!=`, `<`, `>`, `&&`, etc.) emit inf
 
 ## Macros
 
-In rlisp, macros are compile-time functions that take s-expressions and return s-expressions — no `proc_macro` ceremony, just LISP-style `defmacro` with quasiquote:
+rlisp macros are compile-time s-expression transformers — no `proc_macro` crate, no token streaming, no syn/quote. A macro is just a function from s-expressions to s-expressions.
+
+Macro bodies use three special forms borrowed from LISP:
+
+| Form | Meaning |
+|------|---------|
+| `(quasiquote template)` | "Quote this template, but allow unquotes inside" — like a tagged template literal |
+| `(unquote name)` | "Insert the value of `name` here" — a hole in the template |
+| `(unquote-splicing name)` | "Splice the list `name` into the surrounding list" — for inserting multiple forms |
+
+Think of `quasiquote` as "return this exact s-expression, except for the `unquote` holes." Without it, you'd have to manually construct every parenthesis with `list` and `cons`.
 
 ```lisp
+;; Define a when macro: (when condition body...)
 (defmacro when (condition &rest body)
   (quasiquote (if (unquote condition) (do (unquote-splicing body)))))
 
+;; Macro expansion:
+;;   (when (> x 10) (print "big") (print "huge"))
+;; → (if (> x 10) (do (print "big") (print "huge")))
+;; → if x > 10 { print("big"); print("huge") }
+
 (defmacro double (x)
   (quasiquote (+ (unquote x) (unquote x))))
+
+;; (double 21) → (+ 21 21) → 21 + 21
 
 (fn main () ()
   (let x 21)
@@ -86,15 +104,73 @@ In rlisp, macros are compile-time functions that take s-expressions and return s
     (println! "this too")))
 ```
 
-## Inline Rust
+`&rest` captures all remaining arguments into a list, and `unquote-splicing` flattens that list into the surrounding form. This is how variadic macros work.
 
-Drop into raw Rust with `(rust "...")` for anything rlisp doesn't yet express natively:
+## Loops
 
 ```lisp
+(while (> x 0)
+  (println! "{}" x)
+  (-= x 1))
+
+(loop (println! "tick"))
+
+(for x in 0..10
+  (println! "{}" x))
+
+;; for with destructuring
+(for (i val) in (. v iter) enumerate
+  (println! "{}: {}" i val))
+```
+
+## Closures
+
+```lisp
+;; untyped
+(let add (lambda (x y) (+ x y)))
+
+;; typed with return type
+(let mul (lambda ((x i32) (y i32)) i32 (* x y)))
+
+;; move closure
+(let s "hello")
+(let greet (lambda move () (println! "{}" s)))
+```
+
+## Modules, visibility, and imports
+
+```lisp
+(pub fn public_api () i32 42)
+(pub (crate) fn internal () i32 0)       ;; pub(crate)
+(pub (super) fn parent_visible () i32 1)  ;; pub(super)
+
+(pub struct Config
+  (pub host String)                        ;; public field
+  (port u16))                              ;; private field
+
+(pub mod utils                            ;; inline module
+  (pub fn helper () i32 1)
+  (fn private () i32 0))
+
+(mod external_lib)                        ;; external module decl
+
+(use std::collections::HashMap)
+(use std::io::{self,Write,Read})
+(use std::fmt::Display as Fmt)
+```
+
+## Inline Rust
+
+Drop into raw Rust with `(rust "...")` for anything rlisp doesn't express natively.
+The string is emitted verbatim into the generated `.rs` file (with LISP escape sequences unescaped):
+
+```lisp
+(fn raw_example () i32
+  (rust "let x: i32 = 42; x * 2"))
+
 (fn main () ()
-  (rust "let x: i32 = 42;")
-  (rust "let y = x as f64 * 3.14;")
-  (println! "y = {}" (rust "y")))
+  (rust "let message: &str = \"from raw Rust\";")
+  (println! "{}" (rust "message")))
 ```
 
 ## Why
