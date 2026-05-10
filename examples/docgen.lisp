@@ -97,9 +97,9 @@
       (format! "{}{}{}"
         (text-html "Generic functions use angle brackets for type parameters and inline trait bounds:")
         (code-block "loon"
-          "(fn largest <T> ((list &[T])) &T\n  where T: (PartialOrd)\n  (let largest-ref (& ([] list 0)))\n  (for (item list)\n    (if (> item largest-ref)\n      (largest-ref (& item))))\n  largest-ref)")
+          "(fn largest (generic T) ((list &[T])) &T\n  where T: (PartialOrd)\n  (let largest-ref (& ([] list 0)))\n  (for (item list)\n    (if (> item largest-ref)\n      (largest-ref (& item))))\n  largest-ref)")
         (format! "<p>The {} introduces a type parameter, and {} constrains it. Multiple bounds use the {} operator: {}.</p>"
-          (inline-code "<T>")
+          (inline-code "(generic T)")
           (inline-code "where T: (PartialOrd)")
           (inline-code "+")
           (inline-code "(TraitA + TraitB)"))))

@@ -4,7 +4,7 @@
   (y f64))
 
 ; Enum definition
-(enum MyOption (< T)
+(enum MyOption (generic T)
   (MySome T)
   MyNone)
 
@@ -22,11 +22,11 @@
     (. dx powf 2.0)))
 
 ; Generic struct with lifetime
-(struct Borrow <'a>
+(struct Borrow (generic 'a)
   (x &'a str))
 
 ; Generic function
-(fn first <T> ((list &[T])) (MyOption &T)
+(fn first (generic T) ((list &[T])) (MyOption &T)
   (if (!= (list.len) 0)
     (MyOption::MySome (& ([] list 0)))
     MyOption::MyNone))

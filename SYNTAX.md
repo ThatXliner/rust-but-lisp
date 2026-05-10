@@ -11,7 +11,7 @@
 | `(struct Point (x f64) (y f64))` | `struct Point { x: f64, y: f64 }` |
 | `(struct Pair f64 f64)` | `struct Pair(f64, f64);` |
 | `(struct Unit)` | `struct Unit;` |
-| `(enum Option (< T) (Some T) None)` | `enum Option<T> { Some(T), None }` |
+| `(enum Option (generic T) (Some T) None)` | `enum Option<T> { Some(T), None }` |
 | `(match val ((Some x) (handle x)) (None ()))` | `match val { Some(x) => { handle(x) }, None => { } }` |
 | `(if cond (then) (else))` | `if cond { then } else { else }` |
 | `(impl Point (fn new (...) ...))` | `impl Point { fn new(...) ... }` |
@@ -50,12 +50,12 @@
 
 ## Generics
 
-Generics must be introduced with the `<` marker:
+Generics must be introduced with the `generic` command:
 
 ```lisp
-(enum Option (< T) (Some T) None)  ;; Option<T>
-(struct Wrapper (< T) T)            ;; Wrapper<T>
-(fn first (< T) ((list &[T])) &T)  ;; fn first<T>(list: &[T]) -> &T
+(enum Option (generic T) (Some T) None)  ;; Option<T>
+(struct Wrapper (generic T) T)            ;; Wrapper<T>
+(fn first (generic T) ((list &[T])) &T)  ;; fn first<T>(list: &[T]) -> &T
 ```
 
 Without the marker, forms are treated as concrete types/fields:
@@ -68,13 +68,13 @@ Without the marker, forms are treated as concrete types/fields:
 Generics with lifetimes:
 
 ```lisp
-(struct Borrow (< 'a)
+(struct Borrow (generic 'a)
   (x &'a str))
 
-(fn longest (< 'a) ((x &'a str) (y &'a str)) (&'a str)
+(fn longest (generic 'a) ((x &'a str) (y &'a str)) (&'a str)
   (if (> (. x len) (. y len)) x y))
 
-(fn foo (< 'static) ((x &'static str)) (&'static str) x)
+(fn foo (generic 'static) ((x &'static str)) (&'static str) x)
 ```
 
 ## Kebab-case identifiers

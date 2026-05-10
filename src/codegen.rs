@@ -974,20 +974,17 @@ fn compile_param_name(expr: &Expr) -> String {
 
 /// Try to parse generics from an expression. Returns Some(generics_str) if this looks
 /// like generics, None otherwise.
-/// Requires the `<` marker — no heuristic (avoids ambiguity with enum variants).
-/// Supports:
-/// - `(< T U V)` — list with `<` marker
-/// - `<'a>` or `<T>` — bare symbol
+/// Uses the `generic` command — no heuristic (avoids ambiguity with enum variants).
+/// Syntax: `(generic T U V)` or `(generic 'a)`
 fn try_parse_generics(expr: &Expr) -> Option<String> {
     match expr {
-        Expr::List(items, _) if !items.is_empty() && matches!(&items[0], Expr::Symbol(s) if s == "<") => {
+        Expr::List(items, _) if !items.is_empty() && matches!(&items[0], Expr::Symbol(s) if s == "generic") => {
             let params: Vec<String> = items[1..].iter().map(|e| match e {
                 Expr::Symbol(s) => s.clone(),
                 _ => compile_expr(e),
             }).collect();
             Some(format!("<{}>", params.join(", ")))
         }
-        Expr::Symbol(s) if s.starts_with('<') && s.ends_with('>') => Some(s.clone()),
         _ => None,
     }
 }
@@ -1264,7 +1261,7 @@ mod tests {
 
     #[test]
     fn fn_with_generics() {
-        let out = compile_first("(fn first (< T) ((list &[T])) (Option &T) (None))");
+        let out = compile_first("(fn first (generic T) ((list &[T])) (Option &T) (None))");
         assert!(out.contains("fn first<T>(list: &[T]) -> Option<&T>"));
     }
 
@@ -1322,7 +1319,7 @@ mod tests {
 
     #[test]
     fn struct_with_generics() {
-        let out = compile_first("(struct Pair (< T) (first T) (second T))");
+        let out = compile_first("(struct Pair (generic T) (first T) (second T))");
         assert!(out.contains("struct Pair<T>"));
     }
 
@@ -1347,7 +1344,7 @@ mod tests {
 
     #[test]
     fn tuple_struct_with_generics() {
-        let out = compile_first("(struct Wrapper (< T) T)");
+        let out = compile_first("(struct Wrapper (generic T) T)");
         assert!(out.contains("struct Wrapper<T>(T);"));
     }
 
@@ -1367,7 +1364,7 @@ mod tests {
 
     #[test]
     fn enum_with_variants() {
-        let out = compile_first("(enum Option (< T) (Some T) None)");
+        let out = compile_first("(enum Option (generic T) (Some T) None)");
         assert!(out.contains("enum Option<T> {\n    Some(T),\n    None\n}"));
     }
 
@@ -1791,7 +1788,7 @@ mod tests {
 
     #[test]
     fn multi_generics_on_fn() {
-        let out = compile_first("(fn foo (< K V) ((k K) (v V)) () ())");
+        let out = compile_first("(fn foo (generic K V) ((k K) (v V)) () ())");
         assert!(out.contains("fn foo<K, V>(k: K, v: V) -> ()"));
     }
 
@@ -1874,13 +1871,13 @@ mod tests {
 
     #[test]
     fn lifetime_on_fn_def() {
-        let out = compile_first("(fn foo (< 'a) ((x &'a str)) (&'a str) x)");
+        let out = compile_first("(fn foo (generic 'a) ((x &'a str)) (&'a str) x)");
         assert!(out.contains("fn foo<'a>(x: &'a str) -> &'a str"));
     }
 
     #[test]
     fn static_lifetime_on_fn() {
-        let out = compile_first("(fn foo (< 'static) ((x &'static str)) (&'static str) x)");
+        let out = compile_first("(fn foo (generic 'static) ((x &'static str)) (&'static str) x)");
         assert!(out.contains("fn foo<'static>(x: &'static str) -> &'static str"));
     }
 

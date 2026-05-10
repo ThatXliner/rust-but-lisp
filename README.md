@@ -52,7 +52,7 @@ rlisp run file.lisp       # transpile, compile, and run
 | `(fn add ((x i32) (y i32)) i32 (+ x y))` | `fn add(x: i32, y: i32) -> i32 { (x + y) }` |
 | `(let x i32 42)` | `let x: i32 = 42;` |
 | `(struct Point (x f64) (y f64))` | `struct Point { x: f64, y: f64 }` |
-| `(enum Option (< T) (Some T) None)` | `enum Option<T> { Some(T), None }` |
+| `(enum Option (generic T) (Some T) None)` | `enum Option<T> { Some(T), None }` |
 | `(match val ((Some x) (handle x)) (None ()))` | `match val { Some(x) => { handle(x) }, None => { } }` |
 | `(if (> x 0) (println! "yes") (println! "no"))` | `if (x > 0) { println!("yes") } else { println!("no") }` |
 | `(impl Point (fn new (...) ...))` | `impl Point { fn new(...) ... }` |
@@ -181,7 +181,7 @@ The string is emitted verbatim into the generated `.rs` file (with LISP escape s
 
 ```lisp
 ;; Lifetime annotations on function definitions
-(fn longest (< 'a) ((x &'a str) (y &'a str)) (&'a str)
+(fn longest (generic 'a) ((x &'a str) (y &'a str)) (&'a str)
   (if (> (. x len) (. y len)) x y))
 
 ;; Turbofish via :: special form
