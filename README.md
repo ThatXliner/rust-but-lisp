@@ -45,58 +45,31 @@ rlisp build file.lisp     # transpile and compile with rustc
 rlisp run file.lisp       # transpile, compile, and run
 ```
 
-## Syntax map
+## Quick reference
 
 | LISP | Rust |
 |------|------|
 | `(fn add ((x i32) (y i32)) i32 (+ x y))` | `fn add(x: i32, y: i32) -> i32 { (x + y) }` |
 | `(let x i32 42)` | `let x: i32 = 42;` |
 | `(struct Point (x f64) (y f64))` | `struct Point { x: f64, y: f64 }` |
-| `(struct Pair f64 f64)` | `struct Pair(f64, f64);` |
-| `(struct Unit)` | `struct Unit;` |
 | `(enum Option (< T) (Some T) None)` | `enum Option<T> { Some(T), None }` |
 | `(match val ((Some x) (handle x)) (None ()))` | `match val { Some(x) => { handle(x) }, None => { } }` |
 | `(if (> x 0) (println! "yes") (println! "no"))` | `if (x > 0) { println!("yes") } else { println!("no") }` |
 | `(impl Point (fn new (...) ...))` | `impl Point { fn new(...) ... }` |
 | `(trait Display (fn fmt (...) Result))` | `trait Display { fn fmt(...) -> Result; }` |
+| `(. obj field)` / `(. obj method arg)` | `obj.field` / `obj.method(arg)` |
 | `(new Point (x 1.0) (y 2.0))` | `Point { x: 1.0, y: 2.0 }` |
-| `(. obj field)` | `obj.field` |
-| `(. obj method arg)` | `obj.method(arg)` |
-| `([] arr 0)` | `arr[0]` |
-| `(foo! args)` | `foo!(args)` |
-| `(println! "{}" x)` | `println!("{}", x)` |
-| `(loop (println! "tick"))` | `loop { println!("tick") }` |
-| `(while (> x 0) (-= x 1))` | `while x > 0 { x -= 1 }` |
-| `(for x in 0..10 (println! "{}" x))` | `for x in 0..10 { println!("{}", x) }` |
+| `(loop (body))` / `(while cond (body))` / `(for x in iter (body))` | `loop { body }` / `while cond { body }` / `for x in iter { body }` |
 | `(lambda (x y) (+ x y))` | `\|x, y\| { x + y }` |
+| `(foo! args)` / `(println! "{}" x)` | `foo!(args)` / `println!("{}", x)` |
 | `(pub fn foo () i32 42)` | `pub fn foo() -> i32 { 42 }` |
-| `(pub (crate) mod m (fn f () () ()))` | `pub(crate) mod m { fn f() {} }` |
-| `(use std::collections::HashMap)` | `use std::collections::HashMap;` |
-| `(const MAX usize 1024)` | `const MAX: usize = 1024;` |
 | `(rust "let x: i32 = 42; x")` | `let x: i32 = 42; x` |
-| `(:: collect Vec<_>)` | `collect::<Vec<_>>` |
-| `(fn foo (< 'a) ((x &'a str)) (&'a str) x)` | `fn foo<'a>(x: &'a str) -> &'a str { x }` |
-| `(break)` | `break;` |
-| `(break expr)` | `break expr;` |
-| `(return expr)` | `return expr;` |
-| `(as x i32)` | `x as i32` |
-| `(if-let (Some v) x (body) (else))` | `if let Some(v) = x { body } else { else }` |
-| `(while-let (Some v) iter (body))` | `while let Some(v) = iter { body }` |
-| `(unsafe (body))` | `unsafe { body }` |
 
-Binary operators (`+`, `-`, `*`, `/`, `==`, `!=`, `<`, `>`, `&&`, etc.) emit infix: `(+ a b)` → `(a + b)`.
+**Full reference:** [SYNTAX.md](SYNTAX.md) covers everything — generics, lifetimes, visibility, modules, turbofish, inline Rust, if-let, control flow, unsafe blocks, and the complete syntax map.
 
-Generics must be introduced with the `<` marker: `(fn foo (< T) ...)` → `fn foo<T>(...)`. The `<` prefix distinguishes them from enum variants and tuple struct fields:
-```lisp
-(enum Option (< T) (Some T) None)  ;; generic Option<T>
-(struct Wrapper (< T) T)            ;; generic tuple struct
-    
-; vs non-generic:
-(enum Result (Ok i32) (Err String)) ;; no generics
-(struct Point (x f64) (y f64))       ;; no generics
-```
+Binary operators (`+`, `-`, `*`, `/`, `==`, etc.) emit infix: `(+ a b)` → `(a + b)`.
 
-Kebab-case identifiers with hyphens are automatically converted to valid Rust names using `__` (double underscore): `page-header` → `page__header`, `page-footer` → `page__footer`.
+Kebab-case identifiers with hyphens are automatically converted to Rust names using `__` (double underscore): `page-header` → `page__header`.
 
 ## Macros
 
