@@ -45,10 +45,12 @@ fn register_ident(expr: &Expr) -> String {
     SEEN_IDENTS.with(|seen| {
         let mut seen = seen.borrow_mut();
         if let Some(prev) = seen.insert(result.clone(), original.clone()) {
-            warn(format!(
-                "Identifier collision: '{}' and '{}' both map to '{}' in Rust",
-                prev, original, result
-            ));
+            if prev != original {
+                warn(format!(
+                    "Identifier collision: '{}' and '{}' both map to '{}' in Rust",
+                    prev, original, result
+                ));
+            }
         }
     });
     result
@@ -536,8 +538,8 @@ fn compile_enum_variant(expr: &Expr) -> String {
                 format!("{}({})", name, fields.join(", "))
             }
         }
-        Expr::Symbol(_name) => register_ident(expr),
-        _ => format!("_ /* {:?} */", expr),
+        Expr::Symbol(_) => register_ident(expr),
+        _ => compile_expr(expr),
     }
 }
 
