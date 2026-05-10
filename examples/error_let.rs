@@ -1,3 +1,4 @@
+#![allow(redundant_semicolons)]
 fn main() -> () {
     let _ = ();;
     let _ = ();;
