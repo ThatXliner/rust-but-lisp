@@ -336,7 +336,7 @@ fn compile_lambda(args: &[Expr]) -> String {
 fn compile_let(args: &[Expr]) -> String {
     if args.is_empty() {
         warn("let binding with no name or value");
-        return "let _ = ();".to_string();
+        return "let _ = ()".to_string();
     }
 
     let mut i = 0;
@@ -351,7 +351,7 @@ fn compile_let(args: &[Expr]) -> String {
 
     if i >= args.len() {
         warn("let binding missing name after mut");
-        return "let _ = ();".to_string();
+        return "let _ = ()".to_string();
     }
 
     let name = &args[i];
