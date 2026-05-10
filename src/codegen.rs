@@ -136,6 +136,14 @@ fn compile_list(items: &[Expr]) -> String {
             "." => return compile_dot(&items[1..]),
             "new" => return compile_struct_new(&items[1..]),
             "[]" => return compile_index(&items[1..]),
+            "::" => return compile_turbofish(&items[1..]),
+            "break" => return compile_break(&items[1..]),
+            "continue" => return compile_continue(&items[1..]),
+            "return" => return compile_return(&items[1..]),
+            "as" => return compile_cast(&items[1..]),
+            "if-let" => return compile_if_let(&items[1..]),
+            "while-let" => return compile_while_let(&items[1..]),
+            "unsafe" => return compile_unsafe(&items[1..]),
             _ => {}
         }
 
@@ -872,10 +880,10 @@ fn try_parse_generics(expr: &Expr) -> Option<String> {
     }
 }
 
-/// A type parameter is a single uppercase letter, or a lifetime like 'a.
+/// A type parameter is a single uppercase letter, or a lifetime like 'a or 'static.
 fn is_type_param(s: &str) -> bool {
     if s.starts_with('\'') {
-        return s.len() == 2; // 'a, 'b, etc.
+        return s.len() >= 2; // 'a, 'static, etc.
     }
     s.len() == 1 && s.chars().next().is_some_and(|c| c.is_ascii_uppercase())
 }
@@ -894,6 +902,110 @@ fn compile_index(args: &[Expr]) -> String {
     let expr = compile_expr(&args[0]);
     let indices: Vec<String> = args[1..].iter().map(compile_expr).collect();
     format!("{}[{}]", expr, indices.join(", "))
+}
+
+/// Compile turbofish: (:: expr Type...) → expr::<Type...>
+fn compile_turbofish(args: &[Expr]) -> String {
+    if args.is_empty() {
+        return "".to_string();
+    }
+    let expr = compile_expr(&args[0]);
+    let types: Vec<String> = args[1..].iter().map(compile_expr).collect();
+    format!("{}::<{}>", expr, types.join(", "))
+}
+
+/// Compile break expression: (break) → break; , (break expr) → break expr;
+fn compile_break(args: &[Expr]) -> String {
+    if args.is_empty() {
+        "break".to_string()
+    } else {
+        let val = compile_expr(&args[0]);
+        format!("break {}", val)
+    }
+}
+
+/// Compile continue expression: (continue) → continue; , (continue expr) → continue expr;
+fn compile_continue(args: &[Expr]) -> String {
+    if args.is_empty() {
+        "continue".to_string()
+    } else {
+        let val = compile_expr(&args[0]);
+        format!("continue {}", val)
+    }
+}
+
+/// Compile return expression: (return) → return; , (return expr) → return expr;
+fn compile_return(args: &[Expr]) -> String {
+    if args.is_empty() {
+        "return".to_string()
+    } else {
+        let val = compile_expr(&args[0]);
+        format!("return {}", val)
+    }
+}
+
+/// Compile type cast: (as expr Type) → expr as Type
+fn compile_cast(args: &[Expr]) -> String {
+    if args.len() < 2 {
+        warn("as expression missing value or type");
+        return "() as _".to_string();
+    }
+    let expr = compile_expr(&args[0]);
+    let ty = compile_type_expr(&args[1]);
+    format!("{} as {}", expr, ty)
+}
+
+/// Compile if-let expression: (if-let pattern expr then) or (if-let pattern expr then else)
+fn compile_if_let(args: &[Expr]) -> String {
+    if args.len() < 3 {
+        warn("if-let expression missing pattern, value, or then-branch");
+        return "if let _ = () {}".to_string();
+    }
+    let pattern = compile_pattern(&args[0]);
+    let value = compile_expr(&args[1]);
+    let then_body = compile_expr(&args[2]);
+    let then_block = if then_body.starts_with('{') {
+        then_body
+    } else {
+        format!("{{ {} }}", then_body)
+    };
+    if args.len() >= 4 {
+        let else_body = compile_expr(&args[3]);
+        let else_block = if else_body.starts_with('{') {
+            else_body
+        } else {
+            format!("{{ {} }}", else_body)
+        };
+        format!("if let {} = {} {} else {}", pattern, value, then_block, else_block)
+    } else {
+        format!("if let {} = {} {}", pattern, value, then_block)
+    }
+}
+
+/// Compile while-let expression: (while-let pattern expr body...) → while let pattern = expr { body... }
+fn compile_while_let(args: &[Expr]) -> String {
+    if args.len() < 2 {
+        warn("while-let expression missing pattern, value, or body");
+        return "while let _ = () {}".to_string();
+    }
+    let pattern = compile_pattern(&args[0]);
+    let value = compile_expr(&args[1]);
+    let body = compile_body(&args[2..]);
+    if body.is_empty() {
+        format!("while let {} = {} {{}}", pattern, value)
+    } else {
+        format!("while let {} = {} {{\n{}\n}}", pattern, value, indent(&body))
+    }
+}
+
+/// Compile unsafe block: (unsafe body...) → unsafe { body... }
+fn compile_unsafe(args: &[Expr]) -> String {
+    let body = compile_body(args);
+    if body.is_empty() {
+        "unsafe {}".to_string()
+    } else {
+        format!("unsafe {{\n{}\n}}", indent(&body))
+    }
 }
 
 /// Compile an inline Rust block: (rust "raw_code") → raw_code
@@ -1220,7 +1332,8 @@ mod tests {
         let out = compile_first("(fn f () () (loop (println! \"tick\") (break)))");
         assert!(out.contains("loop {"));
         assert!(out.contains("println!(\"tick\");"));
-        assert!(out.contains("break()"));
+        assert!(out.contains("break"));
+        assert!(!out.contains("break()"));
     }
 
     #[test]
@@ -1520,6 +1633,95 @@ mod tests {
     fn multi_generics_on_fn() {
         let out = compile_first("(fn foo (< K V) ((k K) (v V)) () ())");
         assert!(out.contains("fn foo<K, V>(k: K, v: V) -> ()"));
+    }
+
+    // ——— turbofish, control flow, and other syntax ———
+
+    #[test]
+    fn break_expression() {
+        let out = compile_first("(fn f () () (loop (println! \"tick\") (break)))");
+        assert!(out.contains("break"));
+        assert!(!out.contains("break()"));
+    }
+
+    #[test]
+    fn break_with_value() {
+        let out = compile_first("(fn f () i32 (loop (break 42)))");
+        assert!(out.contains("break 42"));
+    }
+
+    #[test]
+    fn continue_expression() {
+        let out = compile_first("(fn f () () (for x in 0..10 (if (== x 0) (continue)) (println! \"{}\" x)))");
+        assert!(out.contains("continue"));
+        assert!(!out.contains("continue()"));
+    }
+
+    #[test]
+    fn return_expression() {
+        let out = compile_first("(fn f () i32 (return 42))");
+        assert!(out.contains("return 42"));
+    }
+
+    #[test]
+    fn return_unit() {
+        let out = compile_first("(fn f () () (return))");
+        assert!(out.contains("return"));
+        assert!(!out.contains("return()"));
+    }
+
+    #[test]
+    fn turbofish_collect() {
+        let out = compile_first("(fn f () Vec<i32> ((:: (. (0..1) collect) Vec<i32>)))");
+        assert!(out.contains("collect::<Vec<i32>>"));
+    }
+
+    #[test]
+    fn turbofish_standalone() {
+        let out = compile_first("(fn f () () (let x ((:: Vec::new i32))))");
+        assert!(out.contains("Vec::new::<i32>"));
+    }
+
+    #[test]
+    fn as_cast() {
+        let out = compile_first("(fn f ((x f64)) i32 (as x i32))");
+        assert!(out.contains("x as i32"));
+    }
+
+    #[test]
+    fn if_let_simple() {
+        let out = compile_first("(fn f ((x (Option i32))) () (if-let (Some v) x (println! \"{}\" v)))");
+        assert!(out.contains("if let Some(v) = x"));
+    }
+
+    #[test]
+    fn if_let_with_else() {
+        let out = compile_first("(fn f ((x (Option i32))) () (if-let (Some v) x (println! \"{}\" v) (println! \"none\")))");
+        assert!(out.contains("else"));
+    }
+
+    #[test]
+    fn while_let_simple() {
+        let out = compile_first("(fn f ((iter &mut (Iter i32))) () (while-let (Some v) ((. iter next)) (println! \"{}\" v)))");
+        assert!(out.contains("while let Some(v) = iter.next()"));
+    }
+
+    #[test]
+    fn unsafe_block() {
+        let out = compile_first("(fn f () () (unsafe (rust \"*ptr\")))");
+        assert!(out.contains("unsafe {"));
+    }
+
+    #[test]
+    fn lifetime_on_fn_def() {
+        let out = compile_first("(fn foo ('a) ((x &'a str)) (&'a str) x)");
+        assert!(out.contains("fn foo<'a>(x: &'a str) -> &'a str"));
+    }
+
+    #[test]
+    fn static_lifetime_on_fn() {
+        let out = compile_first("(fn foo ('static) ((x &'static str)) (&'static str) x)");
+        assert!(out.contains("fn foo<'static>(x: &'static str) -> &'static str"));
     }
 
     // ——— edge cases ———
