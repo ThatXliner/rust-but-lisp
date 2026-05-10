@@ -69,7 +69,7 @@ rlisp run file.lisp       # transpile, compile, and run
 
 Binary operators (`+`, `-`, `*`, `/`, `==`, etc.) emit infix: `(+ a b)` → `(a + b)`.
 
-Kebab-case identifiers with hyphens are automatically converted to Rust names using `__` (double underscore): `page-header` → `page__header`.
+Kebab-case identifiers with hyphens are automatically converted to Rust names using `__` (double underscore): `page-header` → `page__header`. Collisions (e.g. `foo-bar` and `foo__bar` both → `foo__bar`) emit a compile warning.
 
 ## Macros
 

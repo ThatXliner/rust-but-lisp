@@ -79,7 +79,7 @@ Generics with lifetimes:
 
 ## Kebab-case identifiers
 
-Hyphens in function names, variables, fields, and enum variants are automatically converted to `__` (double underscore):
+Hyphens in function names, variables, fields, and enum variants are automatically converted to `__` (double underscore). Collisions (e.g. `foo-bar` and `foo__bar` both → `foo__bar`) emit a compile warning.
 
 ```
 page-header       →  page__header
