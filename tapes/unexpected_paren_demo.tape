@@ -4,12 +4,6 @@ Set Width 800
 Set Height 400
 Set TypingSpeed 100ms
 
-Type "cd ~/Developer/Experiments/rust-but-lisp"
-Enter
-Sleep 500ms
-Type "clear"
-Enter
-Sleep 300ms
 Type "cat examples/error_paren.lisp"
 Enter
 Sleep 1.5s
