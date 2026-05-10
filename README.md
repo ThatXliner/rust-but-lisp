@@ -2,7 +2,7 @@
 
 > **Hello, Hacker News.** You're not wrong. This is a weekend project, not a production compiler — some Rust syntax is missing (turbofish is fixed now, lifetime bounds are on the list). The point isn't completeness; it's exploring what happens when you bolt Lisp macros onto Rust semantics. If that sounds interesting, read on. If you're looking for something to be mad about, [the issue tracker is open](https://github.com/ThatXliner/rlisp/issues).
 
-Rust semantics with LISP syntax. A transparent s-expression frontend that compiles directly to Rust — no runtime, no GC, just `(s-expr → .rs → binary)`.
+Rust semantics in LISP syntax. Write s-expressions, output Rust source: `(s-expr → .rs → binary)`.
 
 ```lisp
 (struct Point
@@ -21,7 +21,7 @@ Rust semantics with LISP syntax. A transparent s-expression frontend that compil
   (println! "Distance: {}" (. p1 distance (& p2))))
 ```
 
-Everything Rust has — ownership, borrowing, lifetimes, generics, traits, pattern matching — expressed as s-expressions. No semantic gap. `rustc` does type checking, borrow checking, and optimization. rlisp just handles the syntax.
+Ownership, borrowing, lifetimes, generics, traits, pattern matching — all expressed as s-expressions. `rustc` still does type checking, borrow checking, and optimization. rlisp just handles the syntax.
 
 ![Build demo](assets/success_demo.gif)
 
@@ -213,11 +213,13 @@ The string is emitted verbatim into the generated `.rs` file (with LISP escape s
 
 ## Why
 
-Mostly for fun — an exploration of what Rust looks like when you strip away the syntax and keep the semantics. But there are practical angles too:
+Mostly for fun. I wanted to see what Rust feels like with the syntax stripped away but the type system and borrow checker still there.
 
-- **Macros become trivial.** In LISP, a macro is just a function that takes s-expressions and returns s-expressions, executed at compile time. No token streaming, no `proc_macro` ceremony. This is the killer feature LISP brings to Rust.
-- **Structural editing.** s-expressions are trivial to manipulate with editor tooling — slurp, barf, transpose, wrap. Every operation is balanced by construction.
-- **Homogeneous syntax.** No distinction between expressions, statements, types, and patterns. Everything is an s-expression. `match` arms and function signatures use the same syntax you already know.
+**Macros** are the obvious practical win: in LISP they're just functions that return s-expressions, running at compile time. No proc_macro, no token streaming. You write `defmacro`, you get quasiquote, you're done.
+
+**Structural editing** is another thing you don't appreciate until you try it. S-expressions are trivially balanced. You can't accidentally leave a brace dangling.
+
+And **the uniformity** grows on you. Expressions, types, patterns, statements — they all look the same. A function signature uses the same syntax as a match arm. It's less to keep in your head.
 
 ## License
 
