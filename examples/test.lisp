@@ -4,7 +4,7 @@
   (y f64))
 
 ; Enum definition
-(enum MyOption (T)
+(enum MyOption (< T)
   (MySome T)
   MyNone)
 

@@ -13,7 +13,7 @@ Rust semantics with LISP syntax. A transparent s-expression frontend that compil
   (fn distance ((&self) (other &Point)) f64
     (let dx (- (. self x) (. other x)))
     (let dy (- (. self y) (. other y)))
-    ((. dx powf 2.0) + (. dy powf 2.0)) sqrt))
+    (. (+ (. dx powf 2.0) (. dy powf 2.0)) sqrt)))
 
 (fn main () ()
   (let p1 (new Point (x 0.0) (y 0.0)))
@@ -22,6 +22,12 @@ Rust semantics with LISP syntax. A transparent s-expression frontend that compil
 ```
 
 Everything Rust has — ownership, borrowing, lifetimes, generics, traits, pattern matching — expressed as s-expressions. No semantic gap. `rustc` does type checking, borrow checking, and optimization. rlisp just handles the syntax.
+
+![Build demo](assets/success_demo.gif)
+
+Pretty diagnostics with [Ariadne](https://github.com/zesterer/ariadne):
+
+![Parse error demo](assets/parse_error_demo.gif)
 
 ## Install
 
@@ -48,7 +54,7 @@ rlisp run file.lisp       # transpile, compile, and run
 | `(struct Point (x f64) (y f64))` | `struct Point { x: f64, y: f64 }` |
 | `(struct Pair f64 f64)` | `struct Pair(f64, f64);` |
 | `(struct Unit)` | `struct Unit;` |
-| `(enum Option (T) (Some T) None)` | `enum Option<T> { Some(T), None }` |
+| `(enum Option (< T) (Some T) None)` | `enum Option<T> { Some(T), None }` |
 | `(match val ((Some x) (handle x)) (None ()))` | `match val { Some(x) => { handle(x) }, None => { } }` |
 | `(if (> x 0) (println! "yes") (println! "no"))` | `if (x > 0) { println!("yes") } else { println!("no") }` |
 | `(impl Point (fn new (...) ...))` | `impl Point { fn new(...) ... }` |
@@ -69,7 +75,7 @@ rlisp run file.lisp       # transpile, compile, and run
 | `(const MAX usize 1024)` | `const MAX: usize = 1024;` |
 | `(rust "let x: i32 = 42; x")` | `let x: i32 = 42; x` |
 | `(:: collect Vec<_>)` | `collect::<Vec<_>>` |
-| `(fn foo ('a) ((x &'a str)) (&'a str) x)` | `fn foo<'a>(x: &'a str) -> &'a str { x }` |
+| `(fn foo (< 'a) ((x &'a str)) (&'a str) x)` | `fn foo<'a>(x: &'a str) -> &'a str { x }` |
 | `(break)` | `break;` |
 | `(break expr)` | `break expr;` |
 | `(return expr)` | `return expr;` |
@@ -79,6 +85,18 @@ rlisp run file.lisp       # transpile, compile, and run
 | `(unsafe (body))` | `unsafe { body }` |
 
 Binary operators (`+`, `-`, `*`, `/`, `==`, `!=`, `<`, `>`, `&&`, etc.) emit infix: `(+ a b)` → `(a + b)`.
+
+Generics must be introduced with the `<` marker: `(fn foo (< T) ...)` → `fn foo<T>(...)`. The `<` prefix distinguishes them from enum variants and tuple struct fields:
+```lisp
+(enum Option (< T) (Some T) None)  ;; generic Option<T>
+(struct Wrapper (< T) T)            ;; generic tuple struct
+    
+; vs non-generic:
+(enum Result (Ok i32) (Err String)) ;; no generics
+(struct Point (x f64) (y f64))       ;; no generics
+```
+
+Kebab-case identifiers with hyphens are automatically converted to valid Rust names using `__` (double underscore): `page-header` → `page__header`, `page-footer` → `page__footer`.
 
 ## Macros
 
@@ -190,7 +208,7 @@ The string is emitted verbatim into the generated `.rs` file (with LISP escape s
 
 ```lisp
 ;; Lifetime annotations on function definitions
-(fn longest ('a) ((x &'a str) (y &'a str)) (&'a str)
+(fn longest (< 'a) ((x &'a str) (y &'a str)) (&'a str)
   (if (> (. x len) (. y len)) x y))
 
 ;; Turbofish via :: special form

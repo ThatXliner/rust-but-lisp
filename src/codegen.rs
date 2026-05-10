@@ -480,7 +480,9 @@ fn compile_enum(args: &[Expr], vis: &str) -> String {
     };
     let rest = if generics.is_empty() { rest } else { &rest[1..] };
 
-    let variants: Vec<String> = rest.iter().map(compile_enum_variant).collect();
+    let variants: Vec<String> = rest.iter()
+        .filter(|v| !matches!(v, Expr::List(items, _) if items.is_empty()))
+        .map(compile_enum_variant).collect();
     let variants_str = variants.join(",\n    ");
 
     format!(
@@ -493,6 +495,7 @@ fn compile_enum(args: &[Expr], vis: &str) -> String {
 }
 
 /// Compile an enum variant: (Name T1 T2) → Name(T1, T2), or Name → Name
+/// Returns None for empty lists or invalid forms.
 fn compile_enum_variant(expr: &Expr) -> String {
     match expr {
         Expr::List(items, _) if !items.is_empty() => {
@@ -939,42 +942,23 @@ fn compile_param_name(expr: &Expr) -> String {
 }
 
 /// Try to parse generics from an expression. Returns Some(generics_str) if this looks
-/// like generics, None otherwise. Supports:
-/// - `(< T U V)` — list with `<` marker (always generics)
-/// - `(T U)` — list without marker (heuristic: all elements are single uppercase letters or lifetimes)
+/// like generics, None otherwise.
+/// Requires the `<` marker — no heuristic (avoids ambiguity with enum variants).
+/// Supports:
+/// - `(< T U V)` — list with `<` marker
 /// - `<'a>` or `<T>` — bare symbol
 fn try_parse_generics(expr: &Expr) -> Option<String> {
     match expr {
-        Expr::List(items, _) if !items.is_empty() => {
-            let start = if matches!(&items[0], Expr::Symbol(s) if s == "<") {
-                1
-            } else {
-                // Without `<` marker, use heuristic: all elements must look like type params
-                let all_params = items
-                    .iter()
-                    .all(|e| matches!(e, Expr::Symbol(s) if is_type_param(s)));
-                if !all_params {
-                    return None;
-                }
-                0
-            };
-            if start >= items.len() {
-                return Some(String::new());
-            }
-            let params: Vec<String> = items[start..].iter().map(compile_expr).collect();
+        Expr::List(items, _) if !items.is_empty() && matches!(&items[0], Expr::Symbol(s) if s == "<") => {
+            let params: Vec<String> = items[1..].iter().map(|e| match e {
+                Expr::Symbol(s) => s.clone(),
+                _ => compile_expr(e),
+            }).collect();
             Some(format!("<{}>", params.join(", ")))
         }
         Expr::Symbol(s) if s.starts_with('<') && s.ends_with('>') => Some(s.clone()),
         _ => None,
     }
-}
-
-/// A type parameter is a single uppercase letter, or a lifetime like 'a or 'static.
-fn is_type_param(s: &str) -> bool {
-    if s.starts_with('\'') {
-        return s.len() >= 2; // 'a, 'static, etc.
-    }
-    s.len() == 1 && s.chars().next().is_some_and(|c| c.is_ascii_uppercase())
 }
 
 /// Compile do block: (do expr1 expr2) → { expr1; expr2 }
@@ -1275,7 +1259,7 @@ mod tests {
 
     #[test]
     fn struct_with_generics() {
-        let out = compile_first("(struct Pair (T) (first T) (second T))");
+        let out = compile_first("(struct Pair (< T) (first T) (second T))");
         assert!(out.contains("struct Pair<T>"));
     }
 
@@ -1300,7 +1284,7 @@ mod tests {
 
     #[test]
     fn tuple_struct_with_generics() {
-        let out = compile_first("(struct Wrapper (T) T)");
+        let out = compile_first("(struct Wrapper (< T) T)");
         assert!(out.contains("struct Wrapper<T>(T);"));
     }
 
@@ -1320,7 +1304,7 @@ mod tests {
 
     #[test]
     fn enum_with_variants() {
-        let out = compile_first("(enum Option (T) (Some T) None)");
+        let out = compile_first("(enum Option (< T) (Some T) None)");
         assert!(out.contains("enum Option<T> {\n    Some(T),\n    None\n}"));
     }
 
@@ -1827,13 +1811,13 @@ mod tests {
 
     #[test]
     fn lifetime_on_fn_def() {
-        let out = compile_first("(fn foo ('a) ((x &'a str)) (&'a str) x)");
+        let out = compile_first("(fn foo (< 'a) ((x &'a str)) (&'a str) x)");
         assert!(out.contains("fn foo<'a>(x: &'a str) -> &'a str"));
     }
 
     #[test]
     fn static_lifetime_on_fn() {
-        let out = compile_first("(fn foo ('static) ((x &'static str)) (&'static str) x)");
+        let out = compile_first("(fn foo (< 'static) ((x &'static str)) (&'static str) x)");
         assert!(out.contains("fn foo<'static>(x: &'static str) -> &'static str"));
     }
 
