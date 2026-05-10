@@ -1,5 +1,7 @@
 # rlisp
 
+> **Hello, Hacker News.** You're not wrong. This is a weekend project, not a production compiler — some Rust syntax is missing (turbofish is fixed now, lifetime bounds are on the list). The point isn't completeness; it's exploring what happens when you bolt Lisp macros onto Rust semantics. If that sounds interesting, read on. If you're looking for something to be mad about, [the issue tracker is open](https://github.com/ThatXliner/rlisp/issues).
+
 Rust semantics with LISP syntax. A transparent s-expression frontend that compiles directly to Rust — no runtime, no GC, just `(s-expr → .rs → binary)`.
 
 ```lisp
@@ -64,6 +66,15 @@ rlisp run file.lisp       # transpile, compile, and run
 | `(use std::collections::HashMap)` | `use std::collections::HashMap;` |
 | `(const MAX usize 1024)` | `const MAX: usize = 1024;` |
 | `(rust "let x: i32 = 42; x")` | `let x: i32 = 42; x` |
+| `(:: collect Vec<_>)` | `collect::<Vec<_>>` |
+| `(fn foo ('a) ((x &'a str)) (&'a str) x)` | `fn foo<'a>(x: &'a str) -> &'a str { x }` |
+| `(break)` | `break;` |
+| `(break expr)` | `break expr;` |
+| `(return expr)` | `return expr;` |
+| `(as x i32)` | `x as i32` |
+| `(if-let (Some v) x (body) (else))` | `if let Some(v) = x { body } else { else }` |
+| `(while-let (Some v) iter (body))` | `while let Some(v) = iter { body }` |
+| `(unsafe (body))` | `unsafe { body }` |
 
 Binary operators (`+`, `-`, `*`, `/`, `==`, `!=`, `<`, `>`, `&&`, etc.) emit infix: `(+ a b)` → `(a + b)`.
 
@@ -171,6 +182,40 @@ The string is emitted verbatim into the generated `.rs` file (with LISP escape s
 (fn main () ()
   (rust "let message: &str = \"from raw Rust\";")
   (println! "{}" (rust "message")))
+```
+
+## Lifetimes, turbofish, and control flow
+
+```lisp
+;; Lifetime annotations on function definitions
+(fn longest ('a) ((x &'a str) (y &'a str)) (&'a str)
+  (if (> (. x len) (. y len)) x y))
+
+;; Turbofish via :: special form
+(let nums ((:: (. (0..10) collect) Vec<i32>)))
+
+;; Break, continue, return
+(for x in 0..10
+  (if (== x 5) (break))
+  (if (== x 3) (continue))
+  (println! "{}" x))
+
+;; Type casts
+(let pi 3.14159)
+(let approx (as pi u32))
+
+;; if-let and while-let
+(if-let (Some v) (. map get key)
+  (println! "found: {}" v)
+  (println! "missing"))
+
+(while-let (Some v) ((. iter next))
+  (println! "{}" v))
+
+;; Unsafe blocks
+(unsafe
+  (rust "let ptr: *const i32 = &42;")
+  (rust "*ptr"))
 ```
 
 ## Why
