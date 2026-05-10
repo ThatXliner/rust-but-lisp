@@ -1,5 +1,6 @@
 use crate::ast::{Expr, Span};
 use std::cell::RefCell;
+use std::collections::HashSet;
 
 /// Convert a lisp kebab-case identifier to a valid Rust identifier.
 /// Hyphens become `__` (double underscore). Preserves operator symbols.
@@ -16,6 +17,7 @@ pub struct Warning {
 thread_local! {
     static WARNINGS: RefCell<Vec<Warning>> = const { RefCell::new(Vec::new()) };
     static CURRENT_SPAN: RefCell<Option<Span>> = const { RefCell::new(None) };
+    static SEEN_IDENTS: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
 }
 
 fn warn(msg: impl Into<String>) {
@@ -24,6 +26,29 @@ fn warn(msg: impl Into<String>) {
         message: msg.into(),
         span,
     }));
+}
+
+/// Register a definition identifier and check for collisions.
+/// Two different Lisp identifiers that produce the same Rust name (e.g.
+/// `foo-bar` and `foo__bar` both → `foo__bar`) will trigger a warning.
+fn register_ident(expr: &Expr) -> String {
+    let result = match expr {
+        Expr::Symbol(s) => sanitize_ident(s),
+        _ => compile_expr(expr),
+    };
+    SEEN_IDENTS.with(|seen| {
+        if !seen.borrow_mut().insert(result.clone()) {
+            let original = match expr {
+                Expr::Symbol(s) => s.clone(),
+                _ => result.clone(),
+            };
+            warn(format!(
+                "Identifier collision: '{}' and another identifier both map to '{}' in Rust",
+                original, result
+            ));
+        }
+    });
+    result
 }
 
 struct SpanGuard {
@@ -49,6 +74,7 @@ impl Drop for SpanGuard {
 /// Returns the generated Rust code and any compile warnings.
 pub fn compile(exprs: &[Expr]) -> (String, Vec<Warning>) {
     WARNINGS.with(|w| w.borrow_mut().clear());
+    SEEN_IDENTS.with(|s| s.borrow_mut().clear());
     let mut out = String::new();
     for (i, expr) in exprs.iter().enumerate() {
         if i > 0 {
@@ -242,7 +268,7 @@ fn compile_fn_def(args: &[Expr], vis: &str) -> String {
         format!(
             "{}fn {}{}({}) -> {};",
             vis,
-            compile_expr(name),
+            register_ident(name),
             generics,
             params,
             ret_type,
@@ -251,7 +277,7 @@ fn compile_fn_def(args: &[Expr], vis: &str) -> String {
         format!(
             "{}fn {}{}({}) -> {} {{\n{}\n}}",
             vis,
-            compile_expr(name),
+            register_ident(name),
             generics,
             params,
             ret_type,
@@ -370,9 +396,9 @@ fn compile_let(args: &[Expr]) -> String {
 
     let mut_str = if mutable { "mut " } else { "" };
     if let Some(t) = type_ann {
-        format!("let {}{}: {} = {}", mut_str, compile_expr(name), t, value)
+        format!("let {}{}: {} = {}", mut_str, register_ident(name), t, value)
     } else {
-        format!("let {}{} = {}", mut_str, compile_expr(name), value)
+        format!("let {}{} = {}", mut_str, register_ident(name), value)
     }
 }
 
@@ -404,14 +430,14 @@ fn compile_struct(args: &[Expr], vis: &str) -> String {
 
     if rest.is_empty() {
         // Unit struct (no fields): (struct Unit) → struct Unit;
-        format!("{}struct {}{};", vis, compile_expr(name), generics)
+        format!("{}struct {}{};", vis, register_ident(name), generics)
     } else if all_symbols {
         // Tuple struct: (struct Point f64 f64) → struct Point(f64, f64);
         let fields: Vec<String> = rest.iter().map(compile_expr).collect();
         format!(
             "{}struct {}{}({});",
             vis,
-            compile_expr(name),
+            register_ident(name),
             generics,
             fields.join(", ")
         )
@@ -422,7 +448,7 @@ fn compile_struct(args: &[Expr], vis: &str) -> String {
         format!(
             "{}struct {}{} {{\n    {}\n}}",
             vis,
-            compile_expr(name),
+            register_ident(name),
             generics,
             fields_str
         )
@@ -437,7 +463,7 @@ fn compile_struct(args: &[Expr], vis: &str) -> String {
         format!(
             "{}struct {}{} {{\n    {}\n}}",
             vis,
-            compile_expr(name),
+            register_ident(name),
             generics,
             fields_str
         )
@@ -454,11 +480,11 @@ fn compile_struct_field(expr: &Expr) -> String {
             if items.is_empty() {
                 return "_: ()".to_string();
             }
-            let name = compile_expr(&items[0]);
+            let name = register_ident(&items[0]);
             let type_parts: Vec<String> = items[1..].iter().map(compile_expr).collect();
             format!("{}{}: {}", vis, name, type_parts.join(" "))
         }
-        Expr::Symbol(name) => format!("{}: ()", sanitize_ident(name)),
+        Expr::Symbol(name) => format!("{}: ()", register_ident(expr)),
         _ => "_: ()".to_string(),
     }
 }
@@ -488,7 +514,7 @@ fn compile_enum(args: &[Expr], vis: &str) -> String {
     format!(
         "{}enum {}{} {{\n    {}\n}}",
         vis,
-        compile_expr(name),
+        register_ident(name),
         generics,
         variants_str
     )
@@ -499,7 +525,7 @@ fn compile_enum(args: &[Expr], vis: &str) -> String {
 fn compile_enum_variant(expr: &Expr) -> String {
     match expr {
         Expr::List(items, _) if !items.is_empty() => {
-            let name = compile_expr(&items[0]);
+            let name = register_ident(&items[0]);
             let fields: Vec<String> = items[1..].iter().map(compile_expr).collect();
             if fields.is_empty() {
                 name
@@ -507,7 +533,7 @@ fn compile_enum_variant(expr: &Expr) -> String {
                 format!("{}({})", name, fields.join(", "))
             }
         }
-        Expr::Symbol(name) => sanitize_ident(name),
+        Expr::Symbol(name) => register_ident(expr),
         _ => format!("_ /* {:?} */", expr),
     }
 }
@@ -715,7 +741,7 @@ fn compile_trait(args: &[Expr], vis: &str) -> String {
         return "trait _ {}".to_string();
     }
 
-    let name = compile_expr(&args[0]);
+    let name = register_ident(&args[0]);
     let methods: Vec<String> = args[1..]
         .iter()
         .map(compile_top_level)
@@ -735,7 +761,7 @@ fn compile_mod(args: &[Expr], vis: &str) -> String {
         return "mod _;".to_string();
     }
 
-    let name = compile_expr(&args[0]);
+    let name = register_ident(&args[0]);
 
     if args.len() == 1 {
         format!("{}mod {};", vis, name)
