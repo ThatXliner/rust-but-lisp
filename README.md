@@ -25,7 +25,7 @@ Ownership, borrowing, lifetimes, generics, traits, pattern matching — all expr
 
 ![Build demo](assets/success_demo.gif)
 
-Pretty diagnostics with [Ariadne](https://github.com/zesterer/ariadne):
+Pretty diagnostics with [Ariadne](https://codeberg.org/zesterer/ariadne):
 
 ![Parse error demo](assets/parse_error_demo.gif)
 
