@@ -1,6 +1,12 @@
 use crate::ast::{Expr, Span};
 use std::cell::RefCell;
 
+/// Convert a lisp kebab-case identifier to a valid Rust identifier.
+/// Hyphens become `__` (double underscore). Preserves operator symbols.
+fn sanitize_ident(s: &str) -> String {
+    s.replace('-', "__")
+}
+
 #[derive(Debug, Clone)]
 pub struct Warning {
     pub message: String,
@@ -58,7 +64,7 @@ pub fn compile(exprs: &[Expr]) -> (String, Vec<Warning>) {
 fn compile_top_level(expr: &Expr) -> String {
     match expr {
         Expr::List(items, span) => {
-            with_span(*span, || {
+            let _guard = SpanGuard::enter(*span);
             if items.is_empty() {
                 return String::new();
             }
@@ -130,7 +136,7 @@ fn try_parse_visibility(items: &[Expr]) -> (String, usize) {
 /// Compile a single expression.
 fn compile_expr(expr: &Expr) -> String {
     match expr {
-        Expr::Symbol(s) => s.clone(),
+        Expr::Symbol(s) => sanitize_ident(s),
         Expr::Number(n) => n.replace('_', ""),
         Expr::StringLit(s) => {
             // Emit a Rust string literal with proper escaping.
@@ -140,7 +146,10 @@ fn compile_expr(expr: &Expr) -> String {
             let content = unescape_lisp_string(inner);
             format!("\"{}\"", escape_rust_string(&content))
         }
-        Expr::List(items, _) => compile_list(items),
+        Expr::List(items, span) => {
+            let _guard = SpanGuard::enter(*span);
+            compile_list(items)
+        }
     }
 }
 
@@ -449,7 +458,7 @@ fn compile_struct_field(expr: &Expr) -> String {
             let type_parts: Vec<String> = items[1..].iter().map(compile_expr).collect();
             format!("{}{}: {}", vis, name, type_parts.join(" "))
         }
-        Expr::Symbol(name) => format!("{}: ()", name),
+        Expr::Symbol(name) => format!("{}: ()", sanitize_ident(name)),
         _ => "_: ()".to_string(),
     }
 }
@@ -495,7 +504,7 @@ fn compile_enum_variant(expr: &Expr) -> String {
                 format!("{}({})", name, fields.join(", "))
             }
         }
-        Expr::Symbol(name) => name.clone(),
+        Expr::Symbol(name) => sanitize_ident(name),
         _ => format!("_ /* {:?} */", expr),
     }
 }
@@ -537,7 +546,7 @@ fn compile_match_arm(expr: &Expr) -> String {
 fn compile_pattern(expr: &Expr) -> String {
     match expr {
         Expr::Symbol(s) if s == "_" => "_".to_string(),
-        Expr::Symbol(s) => s.clone(),
+        Expr::Symbol(s) => sanitize_ident(s),
         Expr::List(items, _) if items.is_empty() => "()".to_string(),
         Expr::List(items, _) => {
             let head = compile_expr(&items[0]);
@@ -635,7 +644,7 @@ fn compile_for(args: &[Expr]) -> String {
 /// (i x) → (i, x),  (Some(x)) → Some(x),  i → i
 fn compile_for_pattern(expr: &Expr) -> String {
     match expr {
-        Expr::Symbol(s) => s.clone(),
+        Expr::Symbol(s) => sanitize_ident(s),
         Expr::List(items, _) if items.is_empty() => "()".to_string(),
         Expr::List(items, _) => {
             // If the head starts with uppercase, treat as enum variant pattern
@@ -768,9 +777,9 @@ fn compile_const(args: &[Expr], vis: &str) -> String {
 
     let name = compile_expr(&args[0]);
     let ty = compile_type_expr(&args[1]);
-    let val = compile_expr(&args[2]);
+    let vals: Vec<String> = args[2..].iter().map(compile_expr).collect();
 
-    format!("{}const {}: {} = {};", vis, name, ty, val)
+    format!("{}const {}: {} = {};", vis, name, ty, vals.join(" "))
 }
 
 /// Compile a `static` declaration.
@@ -834,11 +843,21 @@ fn compile_macro_call(name: &str, args: &[Expr]) -> String {
 /// Compile a function call: (func arg1 arg2) → func(arg1, arg2)
 /// For known binary operators with 2 args, emits infix form: (+ a b) → (a + b)
 fn compile_fn_call(items: &[Expr]) -> String {
+    // Check for binary operators on the raw symbol BEFORE sanitization,
+    // since operators like `-` would lose their identity when sanitized to `__`.
+    // Also check Number for the case where `-` was parsed as a number literal.
+    let raw_head = match &items[0] {
+        Expr::Symbol(s) => s.as_str(),
+        Expr::Number(s) => s.as_str(), // `-` is parsed as a number
+        _ => "",
+    };
+    let is_op = is_binary_op(raw_head);
+
     let head = compile_expr(&items[0]);
     let args: Vec<String> = items[1..].iter().map(compile_expr).collect();
 
-    if is_binary_op(&head) && args.len() == 2 {
-        return format!("({} {} {})", args[0], head, args[1]);
+    if is_op && args.len() == 2 {
+        return format!("({} {} {})", args[0], raw_head, args[1]);
     }
 
     format!("{}({})", head, args.join(", "))
@@ -1205,7 +1224,7 @@ mod tests {
     fn warnings(src: &str) -> Vec<String> {
         let exprs = parser::parse(src).unwrap();
         let (_, w) = compile(&exprs);
-        w
+        w.into_iter().map(|w| w.message).collect()
     }
 
     // ——— fn definitions ———

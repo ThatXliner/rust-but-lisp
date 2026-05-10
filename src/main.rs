@@ -55,8 +55,25 @@ fn main() {
     let expanded = r#macro::expand(&ast);
     let (rust_code, warnings) = codegen::compile(&expanded);
 
+    let file = input_path.as_str();
     for w in &warnings {
-        eprintln!("warning: {}", w);
+        match &w.span {
+            Some(span) => {
+                Report::build(ReportKind::Warning, (file, span.start..span.end))
+                    .with_message("Warning")
+                    .with_label(
+                        Label::new((file, span.start..span.end))
+                            .with_message(&w.message)
+                            .with_color(Color::Yellow),
+                    )
+                    .finish()
+                    .eprint((file, Source::from(&source)))
+                    .ok();
+            }
+            None => {
+                eprintln!("warning: {}", w.message);
+            }
+        }
     }
 
     let input_path = Path::new(input_path);
