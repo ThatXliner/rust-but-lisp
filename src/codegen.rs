@@ -1,6 +1,6 @@
 use crate::ast::{Expr, Span};
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 /// Convert a lisp kebab-case identifier to a valid Rust identifier.
 /// Hyphens become `__` (double underscore). Preserves operator symbols.
@@ -17,7 +17,7 @@ pub struct Warning {
 thread_local! {
     static WARNINGS: RefCell<Vec<Warning>> = const { RefCell::new(Vec::new()) };
     static CURRENT_SPAN: RefCell<Option<Span>> = const { RefCell::new(None) };
-    static SEEN_IDENTS: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+    static SEEN_IDENTS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
 }
 
 fn warn(msg: impl Into<String>) {
@@ -32,19 +32,22 @@ fn warn(msg: impl Into<String>) {
 /// Two different Lisp identifiers that produce the same Rust name (e.g.
 /// `foo-bar` and `foo__bar` both → `foo__bar`) will trigger a warning.
 fn register_ident(expr: &Expr) -> String {
-    let result = match expr {
-        Expr::Symbol(s) => sanitize_ident(s),
-        _ => compile_expr(expr),
+    let (original, result) = match expr {
+        Expr::Symbol(s) => {
+            let sanitized = sanitize_ident(s);
+            (s.clone(), sanitized)
+        }
+        _ => {
+            let compiled = compile_expr(expr);
+            (compiled.clone(), compiled)
+        }
     };
     SEEN_IDENTS.with(|seen| {
-        if !seen.borrow_mut().insert(result.clone()) {
-            let original = match expr {
-                Expr::Symbol(s) => s.clone(),
-                _ => result.clone(),
-            };
+        let mut seen = seen.borrow_mut();
+        if let Some(prev) = seen.insert(result.clone(), original.clone()) {
             warn(format!(
-                "Identifier collision: '{}' and another identifier both map to '{}' in Rust",
-                original, result
+                "Identifier collision: '{}' and '{}' both map to '{}' in Rust",
+                prev, original, result
             ));
         }
     });
@@ -484,7 +487,7 @@ fn compile_struct_field(expr: &Expr) -> String {
             let type_parts: Vec<String> = items[1..].iter().map(compile_expr).collect();
             format!("{}{}: {}", vis, name, type_parts.join(" "))
         }
-        Expr::Symbol(name) => format!("{}: ()", register_ident(expr)),
+        Expr::Symbol(_name) => format!("{}: ()", register_ident(expr)),
         _ => "_: ()".to_string(),
     }
 }
@@ -533,7 +536,7 @@ fn compile_enum_variant(expr: &Expr) -> String {
                 format!("{}({})", name, fields.join(", "))
             }
         }
-        Expr::Symbol(name) => register_ident(expr),
+        Expr::Symbol(_name) => register_ident(expr),
         _ => format!("_ /* {:?} */", expr),
     }
 }
@@ -804,7 +807,7 @@ fn compile_const(args: &[Expr], vis: &str) -> String {
         return format!("/* malformed const: {:?} */", args);
     }
 
-    let name = compile_expr(&args[0]);
+    let name = register_ident(&args[0]);
     let ty = compile_type_expr(&args[1]);
     let vals: Vec<String> = args[2..].iter().map(compile_expr).collect();
 
@@ -835,7 +838,7 @@ fn compile_static(args: &[Expr], vis: &str) -> String {
         return format!("/* malformed static: {:?} */", args);
     }
 
-    let name = compile_expr(&args[i]);
+    let name = register_ident(&args[i]);
     let ty = compile_type_expr(&args[i + 1]);
     let val = compile_expr(&args[i + 2]);
 
@@ -1273,6 +1276,38 @@ mod tests {
     fn malformed_fn_warns() {
         let w = warnings("(fn)");
         assert!(w.iter().any(|m| m.contains("fn definition")));
+    }
+
+    // ——— identifier collision detection ———
+
+    #[test]
+    fn kebab_collision_between_fn_names() {
+        let w = warnings("(fn foo-bar () i32 42) (fn foo__bar () i32 42)");
+        assert!(w.iter().any(|m| m.contains("Identifier collision") && m.contains("foo-bar") && m.contains("foo__bar")));
+    }
+
+    #[test]
+    fn kebab_let_collision() {
+        let w = warnings("(fn test () i32 (let my-var 1) (let my__var 2))");
+        assert!(w.iter().any(|m| m.contains("Identifier collision") && m.contains("my-var") && m.contains("my__var")));
+    }
+
+    #[test]
+    fn enum_variant_collision() {
+        let w = warnings("(enum E (foo-bar) (foo__bar))");
+        assert!(w.iter().any(|m| m.contains("Identifier collision") && m.contains("foo-bar") && m.contains("foo__bar")));
+    }
+
+    #[test]
+    fn struct_field_collision() {
+        let w = warnings("(struct Point (foo-bar i32) (foo__bar i32))");
+        assert!(w.iter().any(|m| m.contains("Identifier collision") && m.contains("foo-bar") && m.contains("foo__bar")));
+    }
+
+    #[test]
+    fn no_collision_for_unique_idents() {
+        let w = warnings("(fn foo-bar () i32 42) (fn baz-qux () i32 42)");
+        assert!(w.iter().all(|m| !m.contains("Identifier collision")));
     }
 
     // ——— struct ———
