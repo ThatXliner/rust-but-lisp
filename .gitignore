@@ -1,1 +1,6 @@
 /target
+examples/*.rs
+examples/docgen
+examples/test
+/test
+
