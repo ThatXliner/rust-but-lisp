@@ -46,6 +46,8 @@ rlisp run file.lisp       # transpile, compile, and run
 | `(fn add ((x i32) (y i32)) i32 (+ x y))` | `fn add(x: i32, y: i32) -> i32 { (x + y) }` |
 | `(let x i32 42)` | `let x: i32 = 42;` |
 | `(struct Point (x f64) (y f64))` | `struct Point { x: f64, y: f64 }` |
+| `(struct Pair f64 f64)` | `struct Pair(f64, f64);` |
+| `(struct Unit)` | `struct Unit;` |
 | `(enum Option (T) (Some T) None)` | `enum Option<T> { Some(T), None }` |
 | `(match val ((Some x) (handle x)) (None ()))` | `match val { Some(x) => { handle(x) }, None => { } }` |
 | `(if (> x 0) (println! "yes") (println! "no"))` | `if (x > 0) { println!("yes") } else { println!("no") }` |

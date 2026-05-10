@@ -8,6 +8,8 @@ use std::fs;
 use std::path::Path;
 use std::process;
 
+use ariadne::{Color, Label, Report, ReportKind, Source};
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
@@ -27,7 +29,26 @@ fn main() {
     });
 
     let ast = parser::parse(&source).unwrap_or_else(|e| {
-        eprintln!("Parse error at position {}: {}", e.pos, e.message);
+        let (start, end) = e.span;
+        let range = if start == end && start < source.len() {
+            let s = source.len().saturating_sub(1);
+            s..source.len()
+        } else if start == end {
+            start..start
+        } else {
+            start..end
+        };
+        let file = input_path.as_str();
+        Report::build(ReportKind::Error, (file, range.clone()))
+            .with_message("Parse error")
+            .with_label(
+                Label::new((file, range))
+                    .with_message(&e.message)
+                    .with_color(Color::Red),
+            )
+            .finish()
+            .eprint((file, Source::from(&source)))
+            .unwrap();
         process::exit(1);
     });
 

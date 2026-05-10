@@ -1,17 +1,47 @@
-use crate::ast::Expr;
+use crate::ast::{Expr, Span};
 use std::cell::RefCell;
 
+#[derive(Debug, Clone)]
+pub struct Warning {
+    pub message: String,
+    pub span: Option<Span>,
+}
+
 thread_local! {
-    static WARNINGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    static WARNINGS: RefCell<Vec<Warning>> = const { RefCell::new(Vec::new()) };
+    static CURRENT_SPAN: RefCell<Option<Span>> = const { RefCell::new(None) };
 }
 
 fn warn(msg: impl Into<String>) {
-    WARNINGS.with(|w| w.borrow_mut().push(msg.into()));
+    let span = CURRENT_SPAN.with(|s| *s.borrow());
+    WARNINGS.with(|w| w.borrow_mut().push(Warning {
+        message: msg.into(),
+        span,
+    }));
+}
+
+struct SpanGuard {
+    prev: Option<Span>,
+}
+
+impl SpanGuard {
+    fn enter(span: Option<Span>) -> Self {
+        let prev = CURRENT_SPAN.with(|s| s.replace(span));
+        Self { prev }
+    }
+}
+
+impl Drop for SpanGuard {
+    fn drop(&mut self) {
+        CURRENT_SPAN.with(|s| {
+            s.replace(self.prev);
+        });
+    }
 }
 
 /// Compile a list of top-level s-expressions into Rust source code.
 /// Returns the generated Rust code and any compile warnings.
-pub fn compile(exprs: &[Expr]) -> (String, Vec<String>) {
+pub fn compile(exprs: &[Expr]) -> (String, Vec<Warning>) {
     WARNINGS.with(|w| w.borrow_mut().clear());
     let mut out = String::new();
     for (i, expr) in exprs.iter().enumerate() {
@@ -27,7 +57,8 @@ pub fn compile(exprs: &[Expr]) -> (String, Vec<String>) {
 /// Compile a top-level expression (items like fn, struct, enum, etc.).
 fn compile_top_level(expr: &Expr) -> String {
     match expr {
-        Expr::List(items) => {
+        Expr::List(items, span) => {
+            with_span(*span, || {
             if items.is_empty() {
                 return String::new();
             }
@@ -70,7 +101,7 @@ fn try_parse_visibility(items: &[Expr]) -> (String, usize) {
         Expr::Symbol(s) if s == "pub" => {
             // Check for a visibility restriction list: (pub (crate) fn ...), (pub (super) fn ...)
             if items.len() > 1
-                && let Expr::List(rest) = &items[1]
+                && let Expr::List(rest, _) = &items[1]
                     && !rest.is_empty() {
                         let rest_str: Vec<String> =
                             rest.iter().map(compile_expr).collect();
@@ -78,7 +109,7 @@ fn try_parse_visibility(items: &[Expr]) -> (String, usize) {
                     }
             ("pub ".to_string(), 1)
         }
-        Expr::List(vis_items) if !vis_items.is_empty() => {
+        Expr::List(vis_items, _) if !vis_items.is_empty() => {
             if let Expr::Symbol(head) = &vis_items[0]
                 && head == "pub" {
                     let rest: Vec<String> = vis_items[1..]
@@ -109,7 +140,7 @@ fn compile_expr(expr: &Expr) -> String {
             let content = unescape_lisp_string(inner);
             format!("\"{}\"", escape_rust_string(&content))
         }
-        Expr::List(items) => compile_list(items),
+        Expr::List(items, _) => compile_list(items),
     }
 }
 
@@ -248,8 +279,8 @@ fn compile_lambda(args: &[Expr]) -> String {
 
     // Parse params: (x y z) or ((x i32) (y i32))
     let typed = match &args[i] {
-        Expr::List(params) if !params.is_empty() => {
-            matches!(&params[0], Expr::List(_))
+        Expr::List(params, _) if !params.is_empty() => {
+            matches!(&params[0], Expr::List(_, _))
         }
         _ => false,
     };
@@ -259,7 +290,7 @@ fn compile_lambda(args: &[Expr]) -> String {
     } else {
         // Untyped: just join symbols
         match &args[i] {
-            Expr::List(params) => {
+            Expr::List(params, _) => {
                 params.iter().map(compile_expr).collect::<Vec<_>>().join(", ")
             }
             _ => compile_expr(&args[i]),
@@ -337,6 +368,11 @@ fn compile_let(args: &[Expr]) -> String {
 }
 
 /// Compile struct definition.
+///
+/// Detects three forms:
+/// - Named fields: (struct Point (x f64) (y f64)) → struct Point { x: f64, y: f64 }
+/// - Tuple fields: (struct Point f64 f64) → struct Point(f64, f64);
+/// - Unit struct:  (struct Point) → struct Point;
 fn compile_struct(args: &[Expr], vis: &str) -> String {
     if args.is_empty() {
         warn("struct definition missing name");
@@ -353,23 +389,57 @@ fn compile_struct(args: &[Expr], vis: &str) -> String {
     };
     let rest = if generics.is_empty() { rest } else { &rest[1..] };
 
-    let fields: Vec<String> = rest.iter().map(compile_struct_field).collect();
-    let fields_str = fields.join(",\n    ");
+    // Detect struct kind
+    let all_symbols = rest.iter().all(|e| matches!(e, Expr::Symbol(_)));
+    let all_lists = rest.iter().all(|e| matches!(e, Expr::List(..)));
 
-    format!(
-        "{}struct {}{} {{\n    {}\n}}",
-        vis,
-        compile_expr(name),
-        generics,
-        fields_str
-    )
+    if rest.is_empty() {
+        // Unit struct (no fields): (struct Unit) → struct Unit;
+        format!("{}struct {}{};", vis, compile_expr(name), generics)
+    } else if all_symbols {
+        // Tuple struct: (struct Point f64 f64) → struct Point(f64, f64);
+        let fields: Vec<String> = rest.iter().map(compile_expr).collect();
+        format!(
+            "{}struct {}{}({});",
+            vis,
+            compile_expr(name),
+            generics,
+            fields.join(", ")
+        )
+    } else if all_lists {
+        // Named-field struct: (struct Point (x f64) (y f64))
+        let fields: Vec<String> = rest.iter().map(compile_struct_field).collect();
+        let fields_str = fields.join(",\n    ");
+        format!(
+            "{}struct {}{} {{\n    {}\n}}",
+            vis,
+            compile_expr(name),
+            generics,
+            fields_str
+        )
+    } else {
+        // Mixed — warn and treat as named
+        warn("struct has mixed named and bare fields — treating as named");
+        let fields: Vec<String> = rest.iter().map(|e| match e {
+            Expr::Symbol(s) => format!("{}: ()", s),
+            _ => compile_struct_field(e),
+        }).collect();
+        let fields_str = fields.join(",\n    ");
+        format!(
+            "{}struct {}{} {{\n    {}\n}}",
+            vis,
+            compile_expr(name),
+            generics,
+            fields_str
+        )
+    }
 }
 
 /// Compile a struct field: (name type...) → name: type
 /// Supports field visibility: (pub x i32) → pub x: i32
 fn compile_struct_field(expr: &Expr) -> String {
     match expr {
-        Expr::List(items) if items.len() >= 2 => {
+        Expr::List(items, _) if items.len() >= 2 => {
             let (vis, offset) = try_parse_visibility(items);
             let items = &items[offset..];
             if items.is_empty() {
@@ -416,7 +486,7 @@ fn compile_enum(args: &[Expr], vis: &str) -> String {
 /// Compile an enum variant: (Name T1 T2) → Name(T1, T2), or Name → Name
 fn compile_enum_variant(expr: &Expr) -> String {
     match expr {
-        Expr::List(items) if !items.is_empty() => {
+        Expr::List(items, _) if !items.is_empty() => {
             let name = compile_expr(&items[0]);
             let fields: Vec<String> = items[1..].iter().map(compile_expr).collect();
             if fields.is_empty() {
@@ -449,12 +519,12 @@ fn compile_match(args: &[Expr]) -> String {
 /// Compile a match arm: ((pattern) body...) → pattern => { body... }
 fn compile_match_arm(expr: &Expr) -> String {
     match expr {
-        Expr::List(items) if items.len() >= 2 => {
+        Expr::List(items, _) if items.len() >= 2 => {
             let pattern = compile_pattern(&items[0]);
             let body = compile_body(&items[1..]);
             format!("{} => {{ {} }}", pattern, body)
         }
-        Expr::List(items) if items.len() == 1 => {
+        Expr::List(items, _) if items.len() == 1 => {
             let pattern = compile_pattern(&items[0]);
             format!("{} => {{}}", pattern)
         }
@@ -468,8 +538,8 @@ fn compile_pattern(expr: &Expr) -> String {
     match expr {
         Expr::Symbol(s) if s == "_" => "_".to_string(),
         Expr::Symbol(s) => s.clone(),
-        Expr::List(items) if items.is_empty() => "()".to_string(),
-        Expr::List(items) => {
+        Expr::List(items, _) if items.is_empty() => "()".to_string(),
+        Expr::List(items, _) => {
             let head = compile_expr(&items[0]);
             let rest: Vec<String> = items[1..].iter().map(compile_pattern).collect();
             if rest.is_empty() {
@@ -566,8 +636,8 @@ fn compile_for(args: &[Expr]) -> String {
 fn compile_for_pattern(expr: &Expr) -> String {
     match expr {
         Expr::Symbol(s) => s.clone(),
-        Expr::List(items) if items.is_empty() => "()".to_string(),
-        Expr::List(items) => {
+        Expr::List(items, _) if items.is_empty() => "()".to_string(),
+        Expr::List(items, _) => {
             // If the head starts with uppercase, treat as enum variant pattern
             if let Expr::Symbol(head) = &items[0]
                 && head.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
@@ -812,15 +882,15 @@ fn compile_body(exprs: &[Expr]) -> String {
 /// Compile function parameters: ((x i32) (y &str)) → x: i32, y: &str
 fn compile_params(expr: &Expr) -> String {
     match expr {
-        Expr::List(items) => {
+        Expr::List(items, _) => {
             let params: Vec<String> = items
                 .iter()
                 .map(|p| match p {
-                    Expr::List(parts) if parts.is_empty() => String::new(),
+                    Expr::List(parts, _) if parts.is_empty() => String::new(),
                     // Single-element list: just the name (e.g. (&self))
-                    Expr::List(parts) if parts.len() == 1 => compile_expr(&parts[0]),
+                    Expr::List(parts, _) if parts.len() == 1 => compile_expr(&parts[0]),
                     // Multi-element list: name is first, rest is type
-                    Expr::List(parts) => {
+                    Expr::List(parts, _) => {
                         let name = compile_param_name(&parts[0]);
                         let type_parts: Vec<String> =
                             parts[1..].iter().map(compile_type_expr).collect();
@@ -838,7 +908,7 @@ fn compile_params(expr: &Expr) -> String {
 /// Compile a param name, joining list elements with spaces (e.g., (&mut f) → "&mut f").
 fn compile_param_name(expr: &Expr) -> String {
     match expr {
-        Expr::List(items) => {
+        Expr::List(items, _) => {
             items
                 .iter()
                 .map(compile_expr)
@@ -856,7 +926,7 @@ fn compile_param_name(expr: &Expr) -> String {
 /// - `<'a>` or `<T>` — bare symbol
 fn try_parse_generics(expr: &Expr) -> Option<String> {
     match expr {
-        Expr::List(items) if !items.is_empty() => {
+        Expr::List(items, _) if !items.is_empty() => {
             let start = if matches!(&items[0], Expr::Symbol(s) if s == "<") {
                 1
             } else {
@@ -1076,7 +1146,7 @@ fn compile_struct_new(args: &[Expr]) -> String {
     let fields: Vec<String> = args[1..]
         .iter()
         .map(|f| match f {
-            Expr::List(items) if items.len() == 2 => {
+            Expr::List(items, _) if items.len() == 2 => {
                 let name = compile_expr(&items[0]);
                 let val = compile_expr(&items[1]);
                 format!("{}: {}", name, val)
@@ -1090,7 +1160,7 @@ fn compile_struct_new(args: &[Expr]) -> String {
 /// Compile a type expression. Types can be single symbols or lists like (& T).
 fn compile_type_expr(expr: &Expr) -> String {
     match expr {
-        Expr::List(items) if !items.is_empty() => {
+        Expr::List(items, _) if !items.is_empty() => {
             let first = compile_expr(&items[0]);
             let rest: Vec<_> = items[1..].iter().map(compile_expr).collect();
             if rest.is_empty() {
@@ -1201,6 +1271,30 @@ mod tests {
     fn malformed_struct_warns() {
         let w = warnings("(struct)");
         assert!(w.iter().any(|m| m.contains("struct")));
+    }
+
+    #[test]
+    fn tuple_struct() {
+        let out = compile_first("(struct Point f64 f64)");
+        assert!(out.contains("struct Point(f64, f64);"));
+    }
+
+    #[test]
+    fn tuple_struct_with_generics() {
+        let out = compile_first("(struct Wrapper (T) T)");
+        assert!(out.contains("struct Wrapper<T>(T);"));
+    }
+
+    #[test]
+    fn unit_struct() {
+        let out = compile_first("(struct Unit)");
+        assert_eq!(out, "struct Unit;");
+    }
+
+    #[test]
+    fn unit_struct_with_visibility() {
+        let out = compile_first("(pub struct Unit)");
+        assert!(out.contains("pub struct Unit;"));
     }
 
     // ——— enum ———

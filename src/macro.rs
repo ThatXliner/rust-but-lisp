@@ -48,7 +48,7 @@ pub fn expand(exprs: &[Expr]) -> Vec<Expr> {
 
 fn try_parse_defmacro(expr: &Expr) -> Option<(String, Macro)> {
     match expr {
-        Expr::List(items) if items.len() >= 4 => {
+        Expr::List(items, _) if items.len() >= 4 => {
             match &items[0] {
                 Expr::Symbol(s) if s == "defmacro" => {
                     let name = match &items[1] {
@@ -56,7 +56,7 @@ fn try_parse_defmacro(expr: &Expr) -> Option<(String, Macro)> {
                         _ => return None,
                     };
                     let params = match &items[2] {
-                        Expr::List(p) => parse_macro_params(p),
+                        Expr::List(p, _) => parse_macro_params(p),
                         _ => return None,
                     };
                     let body = items[3].clone();
@@ -109,7 +109,7 @@ fn parse_macro_params(params: &[Expr]) -> (Vec<String>, bool, Option<String>) {
 
 fn expand_expr(expr: &Expr, macros: &HashMap<String, Macro>) -> Expr {
     match expr {
-        Expr::List(items) if !items.is_empty() => {
+        Expr::List(items, span) if !items.is_empty() => {
             // Check if the head is a macro
             if let Expr::Symbol(head) = &items[0]
                 && let Some(m) = macros.get(head) {
@@ -117,7 +117,7 @@ fn expand_expr(expr: &Expr, macros: &HashMap<String, Macro>) -> Expr {
                     return expand_macro_call(m, args, macros);
                 }
             // Otherwise, recursively expand sub-expressions
-            Expr::List(items.iter().map(|e| expand_expr(e, macros)).collect())
+            Expr::List(items.iter().map(|e| expand_expr(e, macros)).collect(), *span)
         }
         _ => expr.clone(),
     }
@@ -141,7 +141,7 @@ fn expand_macro_call(m: &Macro, args: &[Expr], macros: &HashMap<String, Macro>) 
             } else {
                 Vec::new()
             };
-            bindings.insert(rest_name.clone(), Expr::List(rest_args));
+            bindings.insert(rest_name.clone(), Expr::List(rest_args, None));
         }
 
     // Expand the template body
@@ -156,9 +156,9 @@ fn expand_template(expr: &Expr, bindings: &HashMap<String, Expr>) -> Expr {
     match expr {
         Expr::Symbol(_) | Expr::Number(_) | Expr::StringLit(_) => expr.clone(),
 
-        Expr::List(items) if items.is_empty() => Expr::List(Vec::new()),
+        Expr::List(items, _) if items.is_empty() => Expr::List(Vec::new(), None),
 
-        Expr::List(items) => {
+        Expr::List(items, span) => {
             // Check for (unquote name)
             if items.len() == 2
                 && let Expr::Symbol(head) = &items[0] {
@@ -184,24 +184,25 @@ fn expand_template(expr: &Expr, bindings: &HashMap<String, Expr>) -> Expr {
 
             // Expand the list, handling splicing
             let mut expanded: Vec<Expr> = Vec::new();
+            let mut has_splice = false;
             for item in items {
-                // Check if this item is (unquote-splicing name)
                 let is_splice = match item {
-                    Expr::List(inner) if inner.len() == 2 => {
+                    Expr::List(inner, _) if inner.len() == 2 => {
                         matches!(&inner[0], Expr::Symbol(s) if s == "unquote-splicing")
                     }
                     _ => false,
                 };
 
                 if is_splice {
-                    if let Expr::List(inner) = item
+                    if let Expr::List(inner, _) = item
                         && let Expr::Symbol(name) = &inner[1]
                             && let Some(val) = bindings.get(name) {
-                                if let Expr::List(elems) = val {
+                                if let Expr::List(elems, _) = val {
                                     expanded.extend(elems.clone());
                                 } else {
                                     expanded.push(val.clone());
                                 }
+                                has_splice = true;
                                 continue;
                             }
                     expanded.push(item.clone());
@@ -209,7 +210,8 @@ fn expand_template(expr: &Expr, bindings: &HashMap<String, Expr>) -> Expr {
                     expanded.push(expand_template(item, bindings));
                 }
             }
-            Expr::List(expanded)
+            let new_span = if has_splice { None } else { *span };
+            Expr::List(expanded, new_span)
         }
     }
 }
@@ -236,7 +238,7 @@ mod tests {
         assert_eq!(expanded.len(), 1);
 
         // The expanded form should be an if
-        if let Expr::List(items) = &expanded[0] {
+        if let Expr::List(items, _) = &expanded[0] {
             assert_eq!(items[0], Expr::Symbol("if".into()));
             assert_eq!(
                 items[1],
@@ -244,7 +246,7 @@ mod tests {
                     Expr::Symbol(">".into()),
                     Expr::Symbol("x".into()),
                     Expr::Number("0".into()),
-                ])
+                ], None)
             );
         } else {
             panic!("Expected list");
@@ -268,7 +270,7 @@ mod tests {
                 Expr::Symbol("+".into()),
                 Expr::Number("21".into()),
                 Expr::Number("21".into()),
-            ])
+            ], None)
         );
     }
 }
