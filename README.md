@@ -1,6 +1,6 @@
 # rlisp
 
-> **Hello, Hacker News.** You're not wrong. This is a weekend project, not a production compiler — some Rust syntax is missing (turbofish is fixed now, lifetime bounds are on the list). The point isn't completeness; it's exploring what happens when you bolt Lisp macros onto Rust semantics. If that sounds interesting, read on. If you're looking for something to be mad about, [the issue tracker is open](https://github.com/ThatXliner/rlisp/issues).
+> **Hello, Hacker News.** You're not wrong. This is a weekend project, not a production compiler — some Rust syntax is missing (turbofish is fixed now, lifetime bounds are on the list). The point isn't completeness; it's exploring what happens when you bolt Lisp macros onto Rust semantics. If that sounds interesting, read on. If you're looking for something to be mad about, [the issue tracker is open](https://github.com/ThatXliner/rust-but-lisp/issues).
 
 Rust semantics in LISP syntax. Write s-expressions, output Rust source: `(s-expr → .rs → binary)`.
 
