@@ -221,6 +221,12 @@ Mostly for fun. I wanted to see what Rust feels like with the syntax stripped aw
 
 And **the uniformity** grows on you. Expressions, types, patterns, statements — they all look the same. A function signature uses the same syntax as a match arm. It's less to keep in your head.
 
+## Support
+
+Hey, if you like this project and read this far, consider starring it on GitHub! 
+
+Additionally, please check out some of my more serious projects, namely [Xclif](https://github.com/ThatXliner/xclif) (file-based routing CLI framework), and [Quillium](https://quillium.bryanhu.com/) (inline branching for prose; think Git for writing)
+
 ## License
 
 MIT
