@@ -9,17 +9,17 @@
   MyNone)
 
 ; Trait definition
-(trait Greet
-  (fn greet ((&self)) String))
+(trait Greet (
+  (fn greet ((&self)) String)))
 
 ; Impl block
-(impl Point
+(impl Point (
   (fn new ((x f64) (y f64)) Point
     (new Point (x x) (y y)))
   (fn distance ((&self) (other &Point)) f64
     (let dx (- (. self x) (. other x)))
     (let dy (- (. self y) (. other y)))
-    (. dx powf 2.0)))
+    (. dx powf 2.0))))
 
 ; Generic struct with lifetime
 (struct Borrow (generic 'a)

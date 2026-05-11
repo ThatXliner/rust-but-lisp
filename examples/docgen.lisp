@@ -90,7 +90,7 @@
       (format! "{}{}{}"
         (text-html "A trait defines behavior that types can implement. It's like an interface in Java or a typeclass in Haskell — but resolved statically at compile time.")
         (code-block "loon"
-          "(trait Summary\n  (fn summarize ((&self)) String)\n  (fn author ((&self)) String \"Anonymous\"))  ; default impl")
+          "(trait Summary (\n  (fn summarize ((&self)) String)\n  (fn author ((&self)) String \"Anonymous\")))  ; default impl")
         (text-html "Implementing a trait is separate from the type definition — you can implement your traits for any type, including types from other crates (the \"orphan rule\" applies).")))
 
     (section-html "Generics and Constraints"

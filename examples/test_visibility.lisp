@@ -12,13 +12,13 @@
   Ok
   Err)
 
-(pub trait Display
-  (fn show ((&self)) String))
+(pub trait Display (
+  (fn show ((&self)) String)))
 
-(pub mod utils
+(pub mod utils (
   (pub (crate) fn helper () i32 1)
   (pub (super) fn parent_helper () i32 0)
-  (fn private_help () i32 2))
+  (fn private_help () i32 2)))
 
 (use std::collections::HashMap)
 (use std::io::{self,Write,Read})

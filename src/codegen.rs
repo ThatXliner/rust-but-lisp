@@ -105,20 +105,57 @@ fn compile_top_level(expr: &Expr) -> String {
                 return String::new();
             }
             let head = &items[0];
+            // Attributes appear right after the head symbol:
+            // (fn (derive must_use) important ...) or (struct (derive Debug) Point ...)
+            let (attrs, attr_offset) = try_parse_attributes(&items[1..]);
+            let body = if attr_offset > 0 {
+                &items[1 + attr_offset..]
+            } else {
+                &items[1..]
+            };
             match head {
-                Expr::Symbol(s) if s == "fn" => compile_fn_def(&items[1..], &vis),
-                Expr::Symbol(s) if s == "struct" => compile_struct(&items[1..], &vis),
-                Expr::Symbol(s) if s == "enum" => compile_enum(&items[1..], &vis),
-                Expr::Symbol(s) if s == "trait" => compile_trait(&items[1..], &vis),
-                Expr::Symbol(s) if s == "impl" => compile_impl_block(&items[1..]),
-                Expr::Symbol(s) if s == "mod" => compile_mod(&items[1..], &vis),
-                Expr::Symbol(s) if s == "use" => compile_use(&items[1..], &vis),
-                Expr::Symbol(s) if s == "const" => compile_const(&items[1..], &vis),
-                Expr::Symbol(s) if s == "static" => compile_static(&items[1..], &vis),
+                Expr::Symbol(s) if s == "fn" => compile_fn_def(&attrs, body, &vis),
+                Expr::Symbol(s) if s == "struct" => compile_struct(&attrs, body, &vis),
+                Expr::Symbol(s) if s == "enum" => compile_enum(&attrs, body, &vis),
+                Expr::Symbol(s) if s == "trait" => compile_trait(body, &vis),
+                Expr::Symbol(s) if s == "impl" => compile_impl_block(body),
+                Expr::Symbol(s) if s == "mod" => compile_mod(body, &vis),
+                Expr::Symbol(s) if s == "use" => compile_use(body, &vis),
+                Expr::Symbol(s) if s == "const" => compile_const(body, &vis),
+                Expr::Symbol(s) if s == "static" => compile_static(body, &vis),
+                Expr::Symbol(s) if s == "type" => compile_type_alias(body, &vis),
                 _ => format!("{};", compile_expr(expr)),
             }
         }
         _ => format!("{};", compile_expr(expr)),
+    }
+}
+
+/// Try to parse attributes from the front of an item's argument list.
+/// Returns (attribute_string, items_consumed).
+///
+/// Currently supports `(derive Trait1 Trait2 ...)`.
+fn try_parse_attributes(items: &[Expr]) -> (String, usize) {
+    if items.is_empty() {
+        return (String::new(), 0);
+    }
+    match &items[0] {
+        Expr::List(inner, _) if !inner.is_empty() => {
+            match &inner[0] {
+                Expr::Symbol(s) if s == "derive" => {
+                    let traits: Vec<String> = inner[1..]
+                        .iter()
+                        .map(compile_expr)
+                        .collect();
+                    if traits.is_empty() {
+                        warn("derive attribute with no traits");
+                    }
+                    (format!("#[derive({})]\n", traits.join(", ")), 1)
+                }
+                _ => (String::new(), 0),
+            }
+        }
+        _ => (String::new(), 0),
     }
 }
 
@@ -229,7 +266,7 @@ fn compile_list(items: &[Expr]) -> String {
 }
 
 /// Compile a function definition.
-fn compile_fn_def(args: &[Expr], vis: &str) -> String {
+fn compile_fn_def(attrs: &str, args: &[Expr], vis: &str) -> String {
     if args.len() < 3 {
         warn("fn definition missing name, params, or return type");
         return "/* malformed fn */".to_string();
@@ -242,6 +279,17 @@ fn compile_fn_def(args: &[Expr], vis: &str) -> String {
     // Parse optional generics
     let generics = if i < rest.len() {
         try_parse_generics(&rest[i])
+            .inspect(|_| {
+                i += 1;
+            })
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    // Parse optional where clause
+    let where_clause = if i < rest.len() {
+        try_parse_where(&rest[i..])
             .inspect(|_| {
                 i += 1;
             })
@@ -269,21 +317,25 @@ fn compile_fn_def(args: &[Expr], vis: &str) -> String {
     // Parse body (remaining expressions)
     let body = compile_body(&rest[i..]);
 
+    let gen_and_where = join_gen_and_where(&generics, &where_clause);
+
     if body.trim().is_empty() {
         format!(
-            "{}fn {}{}({}) -> {};",
+            "{}{}fn {}{}({}) -> {};",
+            attrs,
             vis,
             register_ident(name),
-            generics,
+            gen_and_where,
             params,
             ret_type,
         )
     } else {
         format!(
-            "{}fn {}{}({}) -> {} {{\n{}\n}}",
+            "{}{}fn {}{}({}) -> {} {{\n{}\n}}",
+            attrs,
             vis,
             register_ident(name),
-            generics,
+            gen_and_where,
             params,
             ret_type,
             indent(&body)
@@ -413,10 +465,10 @@ fn compile_let(args: &[Expr]) -> String {
 /// - Named fields: (struct Point (x f64) (y f64)) → struct Point { x: f64, y: f64 }
 /// - Tuple fields: (struct Point f64 f64) → struct Point(f64, f64);
 /// - Unit struct:  (struct Point) → struct Point;
-fn compile_struct(args: &[Expr], vis: &str) -> String {
+fn compile_struct(attrs: &str, args: &[Expr], vis: &str) -> String {
     if args.is_empty() {
         warn("struct definition missing name");
-        return "struct _ {}".to_string();
+        return format!("{}struct _ {{}}", attrs);
     }
 
     let (name, rest) = (&args[0], &args[1..]);
@@ -427,7 +479,23 @@ fn compile_struct(args: &[Expr], vis: &str) -> String {
     } else {
         String::new()
     };
-    let rest = if generics.is_empty() { rest } else { &rest[1..] };
+    let mut rest = if generics.is_empty() { rest } else { &rest[1..] };
+
+    // Parse optional where clause
+    let where_clause = if !rest.is_empty() {
+        try_parse_where(rest).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    if !where_clause.is_empty() {
+        rest = &rest[1..];
+    }
+
+    let where_part = if where_clause.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", where_clause)
+    };
 
     // Detect struct kind
     let all_symbols = rest.iter().all(|e| matches!(e, Expr::Symbol(_)));
@@ -435,27 +503,31 @@ fn compile_struct(args: &[Expr], vis: &str) -> String {
 
     if rest.is_empty() {
         // Unit struct (no fields): (struct Unit) → struct Unit;
-        format!("{}struct {}{};", vis, register_ident(name), generics)
+        format!("{}{}struct {}{}{};", attrs, vis, register_ident(name), generics, where_part)
     } else if all_symbols {
         // Tuple struct: (struct Point f64 f64) → struct Point(f64, f64);
         let fields: Vec<String> = rest.iter().map(compile_expr).collect();
         format!(
-            "{}struct {}{}({});",
+            "{}{}struct {}{}({}){};",
+            attrs,
             vis,
             register_ident(name),
             generics,
-            fields.join(", ")
+            fields.join(", "),
+            where_part,
         )
     } else if all_lists {
         // Named-field struct: (struct Point (x f64) (y f64))
         let fields: Vec<String> = rest.iter().map(compile_struct_field).collect();
         let fields_str = fields.join(",\n    ");
         format!(
-            "{}struct {}{} {{\n    {}\n}}",
+            "{}{}struct {}{} {{\n    {}\n}}{}",
+            attrs,
             vis,
             register_ident(name),
             generics,
-            fields_str
+            fields_str,
+            where_part,
         )
     } else {
         // Mixed — warn and treat as named
@@ -466,11 +538,13 @@ fn compile_struct(args: &[Expr], vis: &str) -> String {
         }).collect();
         let fields_str = fields.join(",\n    ");
         format!(
-            "{}struct {}{} {{\n    {}\n}}",
+            "{}{}struct {}{} {{\n    {}\n}}{}",
+            attrs,
             vis,
             register_ident(name),
             generics,
-            fields_str
+            fields_str,
+            where_part,
         )
     }
 }
@@ -495,10 +569,10 @@ fn compile_struct_field(expr: &Expr) -> String {
 }
 
 /// Compile enum definition.
-fn compile_enum(args: &[Expr], vis: &str) -> String {
+fn compile_enum(attrs: &str, args: &[Expr], vis: &str) -> String {
     if args.is_empty() {
         warn("enum definition missing name");
-        return "enum _ {}".to_string();
+        return format!("{}enum _ {{}}", attrs);
     }
 
     let (name, rest) = (&args[0], &args[1..]);
@@ -509,7 +583,23 @@ fn compile_enum(args: &[Expr], vis: &str) -> String {
     } else {
         String::new()
     };
-    let rest = if generics.is_empty() { rest } else { &rest[1..] };
+    let mut rest = if generics.is_empty() { rest } else { &rest[1..] };
+
+    // Parse optional where clause
+    let where_clause = if !rest.is_empty() {
+        try_parse_where(rest).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    if !where_clause.is_empty() {
+        rest = &rest[1..];
+    }
+
+    let where_part = if where_clause.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", where_clause)
+    };
 
     let variants: Vec<String> = rest.iter()
         .filter(|v| !matches!(v, Expr::List(items, _) if items.is_empty()))
@@ -517,11 +607,13 @@ fn compile_enum(args: &[Expr], vis: &str) -> String {
     let variants_str = variants.join(",\n    ");
 
     format!(
-        "{}enum {}{} {{\n    {}\n}}",
+        "{}{}enum {}{} {{\n    {}\n}}{}",
+        attrs,
         vis,
         register_ident(name),
         generics,
-        variants_str
+        variants_str,
+        where_part,
     )
 }
 
@@ -695,51 +787,87 @@ fn compile_for_pattern(expr: &Expr) -> String {
 }
 
 /// Compile `impl` block.
+/// (impl (generic T) (Vec T) ((fn push ...) (fn pop ...)))
+///   → impl<T> Vec<T> { fn push() fn pop() }
+/// (impl (generic T) (where (T Display)) Display for (MyType T) ((fn fmt ...)))
+///   → impl<T> Display for MyType<T> where T: Display { fn fmt() }
 fn compile_impl_block(args: &[Expr]) -> String {
     if args.is_empty() {
         warn("impl block missing type name");
         return "impl _ {}".to_string();
     }
 
-    // Check for `impl Trait for Type`
-    let (trait_name, type_name, method_start): (Option<String>, String, usize) =
-        if args.len() >= 3 {
-            if let Expr::Symbol(s) = &args[1] {
-                if s == "for" {
-                    (
-                        Some(compile_expr(&args[0])),
-                        compile_expr(&args[2]),
-                        3,
-                    )
-                } else {
-                    (None, compile_expr(&args[0]), 1)
-                }
-            } else {
-                (None, compile_expr(&args[0]), 1)
-            }
-        } else if !args.is_empty() {
-            (None, compile_expr(&args[0]), 1)
-        } else {
-            warn("impl block missing type name");
+    let mut i = 0;
+
+    // Parse optional generics
+    let generics = if i < args.len() {
+        try_parse_generics(&args[i])
+            .inspect(|_| { i += 1; })
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    // Parse optional where clause
+    let where_clause = if i < args.len() {
+        try_parse_where(&args[i..])
+            .inspect(|_| { i += 1; })
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    if i >= args.len() {
+        warn("impl block missing type name (after generics/where)");
         return "impl _ {}".to_string();
+    }
+
+    // Check for `impl Trait for Type`. Type name always uses `compile_type_expr`.
+    let (trait_name, type_name, body_start): (Option<String>, String, usize) =
+        if i + 2 < args.len()
+            && matches!(&args[i + 1], Expr::Symbol(s) if s == "for")
+        {
+            (
+                Some(compile_type_expr(&args[i])),
+                compile_type_expr(&args[i + 2]),
+                i + 3,
+            )
+        } else {
+            (None, compile_type_expr(&args[i]), i + 1)
         };
 
-    let methods: Vec<String> = args[method_start..]
-        .iter()
-        .map(compile_top_level)
-        .collect();
+    // Parse body: a wrapped list of items
+    let methods = if body_start < args.len() {
+        if let Expr::List(inner, _) = &args[body_start] {
+            inner.iter().map(compile_top_level).collect::<Vec<_>>()
+        } else {
+            warn("impl body should be a wrapped list");
+            vec![]
+        }
+    } else {
+        vec![]
+    };
     let methods_str = methods.join("\n\n");
 
-    let impl_header = if let Some(t) = trait_name {
-        format!("impl {} for {}", t, type_name)
+    // Where clause goes after the type: impl<T> Display for MyType<T> where T: Display { ... }
+    let where_part = if where_clause.is_empty() {
+        String::new()
     } else {
-        format!("impl {}", type_name)
+        format!(" {}", where_clause)
+    };
+
+    let impl_header = if let Some(t) = trait_name {
+        format!("impl{} {} for {}{}", generics, t, type_name, where_part)
+    } else {
+        format!("impl{} {}{}", generics, type_name, where_part)
     };
 
     format!("{} {{\n{}\n}}", impl_header, indent(&methods_str))
 }
 
 /// Compile trait definition.
+/// (trait Foo Display (where (Self Sized)) ((fn bar () ()) (type Item)))
+///   → trait Foo: Display where Self: Sized { fn bar(); type Item; }
 fn compile_trait(args: &[Expr], vis: &str) -> String {
     if args.is_empty() {
         warn("trait definition missing name");
@@ -747,19 +875,94 @@ fn compile_trait(args: &[Expr], vis: &str) -> String {
     }
 
     let name = register_ident(&args[0]);
-    let methods: Vec<String> = args[1..]
-        .iter()
-        .map(compile_top_level)
-        .collect();
+    let mut i = 1;
 
-    let methods_str = methods.join("\n\n");
+    // Parse optional generics
+    let generics = if i < args.len() {
+        try_parse_generics(&args[i])
+            .inspect(|_| { i += 1; })
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
 
-    format!("{}trait {} {{\n{}\n}}", vis, name, indent(&methods_str))
+    // Parse optional supertraits
+    let supertraits = if i < args.len() {
+        try_parse_supertraits(&args[i..])
+            .map(|(s, consumed)| { i += consumed; s })
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    // Parse optional where clause
+    let where_clause = if i < args.len() {
+        try_parse_where(&args[i..])
+            .inspect(|_| { i += 1; })
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    // Parse body: a wrapped list of items
+    let body_items = if i < args.len() {
+        if let Expr::List(inner, _) = &args[i] {
+            inner.iter().map(|item| {
+                if let Expr::List(inner_inner, _) = item {
+                    if !inner_inner.is_empty()
+                        && matches!(&inner_inner[0], Expr::Symbol(s) if s == "type")
+                    {
+                        return compile_trait_type_alias(&inner_inner[1..]);
+                    }
+                }
+                compile_top_level(item)
+            }).collect::<Vec<_>>()
+        } else {
+            warn("trait body should be a wrapped list");
+            vec![]
+        }
+    } else {
+        vec![]
+    };
+
+    let body = body_items.join("\n\n");
+
+    let mut header_extra = String::new();
+    if !generics.is_empty() {
+        header_extra.push_str(&generics);
+    }
+    if !supertraits.is_empty() {
+        header_extra.push_str(&supertraits);
+    }
+    if !where_clause.is_empty() {
+        header_extra.push(' ');
+        header_extra.push_str(&where_clause);
+    }
+
+    format!("{}trait {}{} {{\n{}\n}}", vis, name, header_extra, indent(&body))
+}
+
+/// Compile an associated type declaration inside a trait.
+/// (type Item)            → type Item;
+/// (type Item Display)    → type Item: Display;
+/// (type Item (+ Display Clone)) → type Item: Display + Clone;
+fn compile_trait_type_alias(args: &[Expr]) -> String {
+    if args.is_empty() {
+        warn("associated type missing name");
+        return "type _;".to_string();
+    }
+    let name = register_ident(&args[0]);
+    if args.len() >= 2 {
+        let bounds: Vec<String> = args[1..].iter().map(compile_expr).collect();
+        format!("type {}: {};", name, bounds.join(" + "))
+    } else {
+        format!("type {};", name)
+    }
 }
 
 /// Compile a `mod` declaration.
-/// (mod my_module body...) → mod my_module { body... }
-/// (mod my_module) → mod my_module;
+/// (mod my_module)              → mod my_module;         (external, no body)
+/// (mod my_module ((fn body)))  → mod my_module { ... }  (inline, wrapped body)
 fn compile_mod(args: &[Expr], vis: &str) -> String {
     if args.is_empty() {
         warn("mod declaration missing name");
@@ -768,13 +971,21 @@ fn compile_mod(args: &[Expr], vis: &str) -> String {
 
     let name = register_ident(&args[0]);
 
-    if args.len() == 1 {
+    // Body is an optional wrapped list
+    let body_items = if args.len() >= 2 {
+        if let Expr::List(inner, _) = &args[1] {
+            inner.iter().map(compile_top_level).collect::<Vec<_>>()
+        } else {
+            warn("mod body should be a wrapped list; treating as external module");
+            return format!("{}mod {};", vis, name);
+        }
+    } else {
+        vec![]
+    };
+
+    if body_items.is_empty() {
         format!("{}mod {};", vis, name)
     } else {
-        let body_items: Vec<String> = args[1..]
-            .iter()
-            .map(compile_top_level)
-            .collect();
         let body = body_items.join("\n\n");
         format!("{}mod {} {{\n{}\n}}", vis, name, indent(&body))
     }
@@ -846,6 +1057,48 @@ fn compile_static(args: &[Expr], vis: &str) -> String {
 
     let mut_str = if mutable { "mut " } else { "" };
     format!("{}static {}{}: {} = {};", vis, mut_str, name, ty, val)
+}
+
+/// Compile a type alias.
+/// (type Meters i32)                          → type Meters = i32;
+/// (type Foo (generic T) (Option T))           → type Foo<T> = Option<T>;
+/// (type Foo (generic T) (where (T Clone)) (Option T)) → type Foo<T> = Option<T> where T: Clone;
+fn compile_type_alias(args: &[Expr], vis: &str) -> String {
+    if args.len() < 2 {
+        warn("type alias missing name or definition");
+        return "/* malformed type alias */".to_string();
+    }
+
+    let name = register_ident(&args[0]);
+    let mut i = 1;
+
+    // Parse optional generics
+    let generics = if i < args.len() {
+        try_parse_generics(&args[i])
+            .inspect(|_| { i += 1; })
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    // Parse optional where clause
+    let where_clause = if i < args.len() {
+        try_parse_where(&args[i..])
+            .inspect(|_| { i += 1; })
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    if i >= args.len() {
+        warn("type alias missing type definition");
+        return format!("{}type {} = ();", vis, name);
+    }
+
+    let rhs = compile_type_expr(&args[i]);
+    let gen_and_where = join_gen_and_where(&generics, &where_clause);
+
+    format!("{}type {}{} = {};", vis, name, gen_and_where, rhs)
 }
 
 /// Compile dot access: (. expr field) or (. expr method args...)
@@ -975,17 +1228,129 @@ fn compile_param_name(expr: &Expr) -> String {
 /// Try to parse generics from an expression. Returns Some(generics_str) if this looks
 /// like generics, None otherwise.
 /// Uses the `generic` command — no heuristic (avoids ambiguity with enum variants).
-/// Syntax: `(generic T U V)` or `(generic 'a)`
+///
+/// Syntax:
+///   (generic T U V)               → <T, U, V>
+///   (generic 'a)                  → <'a>
+///   (generic (T Display) K)       → <T: Display, K>
+///   (generic (T Display Clone))   → <T: Display + Clone>
 fn try_parse_generics(expr: &Expr) -> Option<String> {
     match expr {
         Expr::List(items, _) if !items.is_empty() && matches!(&items[0], Expr::Symbol(s) if s == "generic") => {
             let params: Vec<String> = items[1..].iter().map(|e| match e {
+                Expr::List(param_parts, _) if !param_parts.is_empty() => {
+                    let name = compile_expr(&param_parts[0]);
+                    let bounds: Vec<String> = param_parts[1..]
+                        .iter()
+                        .map(compile_expr)
+                        .collect();
+                    if bounds.is_empty() {
+                        name
+                    } else {
+                        format!("{}: {}", name, bounds.join(" + "))
+                    }
+                }
                 Expr::Symbol(s) => s.clone(),
                 _ => compile_expr(e),
             }).collect();
             Some(format!("<{}>", params.join(", ")))
         }
         _ => None,
+    }
+}
+
+/// Try to parse supertrait bounds from the start of items.
+/// Returns Some((supertraits_string, items_consumed)) or None.
+///
+/// An uppercase symbol or a list of bounds joined by `+` after the trait name.
+/// (trait Foo Display ...)       → trait Foo: Display { ... }
+/// (trait Foo (+ Display Clone) ...) → trait Foo: Display + Clone { ... }
+fn try_parse_supertraits(items: &[Expr]) -> Option<(String, usize)> {
+    if items.is_empty() {
+        return None;
+    }
+    match &items[0] {
+        Expr::Symbol(s) if is_uppercase_type(s) => {
+            Some((format!(": {}", s), 1))
+        }
+        Expr::List(inner, _) if !inner.is_empty() => {
+            if let Expr::Symbol(first) = &inner[0] {
+                if first == "where" || first == "fn" || first == "type" || first == "generic" {
+                    return None;
+                }
+            } else {
+                // Not a symbol — likely a body item list, not a supertrait
+                return None;
+            }
+            let bounds = compile_expr(&items[0]);
+            Some((format!(": {}", bounds), 1))
+        }
+        _ => None,
+    }
+}
+
+/// Join generics and where clause with correct spacing.
+fn join_gen_and_where(generics: &str, where_clause: &str) -> String {
+    match (generics.is_empty(), where_clause.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => generics.to_string(),
+        (true, false) => format!(" {}", where_clause),
+        (false, false) => format!("{} {}", generics, where_clause),
+    }
+}
+
+/// Try to parse a `where` clause from the current position.
+/// Returns Some(where_clause_string) if found, None otherwise.
+///
+/// Syntax: (where (T Display Clone) ('a 'b))
+/// Output: where T: Display + Clone, 'a: 'b
+fn try_parse_where(items: &[Expr]) -> Option<String> {
+    if items.is_empty() {
+        return None;
+    }
+    match &items[0] {
+        Expr::List(inner, _) if !inner.is_empty() => {
+            match &inner[0] {
+                Expr::Symbol(s) if s == "where" => {
+                    let clauses: Vec<String> = inner[1..]
+                        .iter()
+                        .map(compile_where_clause)
+                        .collect();
+                    if clauses.is_empty() {
+                        warn("where clause with no bounds");
+                        return Some(String::new());
+                    }
+                    Some(format!("where {}", clauses.join(", ")))
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Compile a single where-clause element.
+/// (T Display Clone)     → "T: Display + Clone"
+/// ('a 'b)               → "'a: 'b"
+fn compile_where_clause(expr: &Expr) -> String {
+    match expr {
+        Expr::List(items, _) if !items.is_empty() => {
+            let target = compile_expr(&items[0]);
+            let bounds: Vec<String> = items[1..]
+                .iter()
+                .map(compile_expr)
+                .collect();
+            if bounds.is_empty() {
+                warn("where clause with no bounds");
+                target
+            } else {
+                format!("{}: {}", target, bounds.join(" + "))
+            }
+        }
+        _ => {
+            warn("non-list where clause element");
+            compile_expr(expr)
+        }
     }
 }
 
@@ -1378,7 +1743,7 @@ mod tests {
 
     #[test]
     fn trait_with_method_sigs() {
-        let out = compile_first("(trait Greet (fn greet ((&self)) String))");
+        let out = compile_first("(trait Greet ((fn greet ((&self)) String)))");
         assert!(out.contains("trait Greet {\n    fn greet(&self) -> String;\n}"));
     }
 
@@ -1392,7 +1757,7 @@ mod tests {
 
     #[test]
     fn impl_with_methods() {
-        let out = compile_first("(impl Point (fn new ((x f64) (y f64)) Point (new Point (x x) (y y))))");
+        let out = compile_first("(impl Point ((fn new ((x f64) (y f64)) Point (new Point (x x) (y y)))))");
         assert!(out.contains("impl Point {"));
         assert!(out.contains("fn new(x: f64, y: f64) -> Point"));
     }
@@ -1400,7 +1765,7 @@ mod tests {
     #[test]
     fn impl_trait_for_type() {
         let out =
-            compile_first("(impl Display for Point (fn fmt ((&self) (f &mut Formatter)) (Result () Error)))");
+            compile_first("(impl Display for Point ((fn fmt ((&self) (f &mut Formatter)) (Result () Error))))");
         assert!(out.contains("impl Display for Point {"));
         assert!(out.contains("fn fmt(&self, f: &mut Formatter) -> Result<(), Error>;"));
     }
@@ -1603,14 +1968,14 @@ mod tests {
 
     #[test]
     fn mod_with_body() {
-        let out = compile_first("(mod mymod (fn helper () i32 1))");
+        let out = compile_first("(mod mymod ((fn helper () i32 1)))");
         assert!(out.contains("mod mymod {"));
         assert!(out.contains("fn helper() -> i32 {"));
     }
 
     #[test]
     fn pub_mod() {
-        let out = compile_first("(pub mod mymod (fn f () () ()))");
+        let out = compile_first("(pub mod mymod ((fn f () () ())))");
         assert!(out.starts_with("pub mod mymod {"));
     }
 
@@ -1906,5 +2271,181 @@ mod tests {
     fn empty_input() {
         let (out, _) = compile(&[]);
         assert!(out.is_empty());
+    }
+
+    // ——— where clauses ———
+
+    #[test]
+    fn fn_with_where_clause() {
+        let out = compile_first("(fn foo (generic T) (where (T Display)) ((x T)) String (to_string x))");
+        assert!(out.contains("where T: Display"));
+    }
+
+    #[test]
+    fn fn_with_where_and_lifetime() {
+        let out = compile_first("(fn longest (generic 'a) (where ('a 'b)) ((x &'a str)) (&'a str) x)");
+        assert!(out.contains("where 'a: 'b"));
+    }
+
+    #[test]
+    fn struct_with_where_clause() {
+        let out = compile_first("(struct Pair (generic T) (where (T Clone)) (first T) (second T))");
+        assert!(out.contains("where T: Clone"));
+    }
+
+    #[test]
+    fn enum_with_where_clause() {
+        let out = compile_first("(enum Foo (generic T) (where (T Display)) (Bar T) Baz)");
+        assert!(out.contains("where T: Display"));
+    }
+
+    #[test]
+    fn where_clause_no_fn_body() {
+        let out = compile_first("(fn foo (generic T) (where (T Display)) ((x T)) String)");
+        assert!(out.contains("where T: Display"));
+        assert!(out.ends_with(';'));
+    }
+
+    // ——— inline generics bounds ———
+
+    #[test]
+    fn generics_with_inline_bounds() {
+        let out = compile_first("(fn foo (generic (T Display)) ((x T)) () ())");
+        assert!(out.contains("fn foo<T: Display>"));
+    }
+
+    #[test]
+    fn generics_with_multi_bounds() {
+        let out = compile_first("(fn foo (generic (T Display Clone)) () () ())");
+        assert!(out.contains("fn foo<T: Display + Clone>"));
+    }
+
+    #[test]
+    fn generics_mixed_inline_and_bare() {
+        let out = compile_first("(fn foo (generic (K Display) V) () () ())");
+        assert!(out.contains("fn foo<K: Display, V>"));
+    }
+
+    // ——— derive attributes ———
+
+    #[test]
+    fn struct_with_derive() {
+        let out = compile_first("(struct (derive Debug Clone) Point (x i32) (y i32))");
+        assert!(out.contains("#[derive(Debug, Clone)]"));
+        assert!(out.contains("struct Point {"));
+    }
+
+    #[test]
+    fn enum_with_derive() {
+        let out = compile_first("(enum (derive Debug PartialEq) Status Ok Err)");
+        assert!(out.contains("#[derive(Debug, PartialEq)]"));
+    }
+
+    #[test]
+    fn fn_with_derive() {
+        let out = compile_first("(fn (derive must_use) important () i32 42)");
+        assert!(out.contains("#[derive(must_use)]"));
+    }
+
+    #[test]
+    fn empty_derive_warns() {
+        let w = warnings("(struct (derive) Point)");
+        assert!(w.iter().any(|m| m.contains("derive")));
+    }
+
+    // ——— supertraits ———
+
+    #[test]
+    fn trait_with_supertrait() {
+        let out = compile_first("(trait Foo Display ((fn fmt () ())))");
+        assert!(out.contains("trait Foo: Display {"));
+    }
+
+    #[test]
+    fn trait_with_multiple_supertraits() {
+        let out = compile_first("(trait Foo (+ Display Clone) ((fn bar () ())))");
+        assert!(out.contains("trait Foo: (Display + Clone) {"));
+    }
+
+    #[test]
+    fn trait_with_supertrait_and_where() {
+        let out = compile_first("(trait Foo Display (where (Self Sized)) ((fn bar () ())))");
+        assert!(out.contains("trait Foo: Display"));
+        assert!(out.contains("where Self: Sized"));
+    }
+
+    // ——— associated types ———
+
+    #[test]
+    fn trait_with_associated_type() {
+        let out = compile_first("(trait Iterator ((type Item) (fn next () ())))");
+        assert!(out.contains("type Item;"));
+    }
+
+    #[test]
+    fn trait_with_associated_type_bounds() {
+        let out = compile_first("(trait Foo ((type Item Display Clone) (fn get () ())))");
+        assert!(out.contains("type Item: Display + Clone;"));
+    }
+
+    // ——— generic impl blocks ———
+
+    #[test]
+    fn impl_with_generics() {
+        let out = compile_first("(impl (generic T) (Vec T) ((fn push ((&mut self) (value T)) () ())))");
+        assert!(out.contains("impl<T> Vec<T> {"));
+    }
+
+    #[test]
+    fn impl_trait_with_generics_and_where() {
+        let out = compile_first("(impl (generic T) (where (T Display)) Display for (MyType T) ((fn fmt () ())))");
+        assert!(out.contains("impl<T> Display for MyType<T> where T: Display {"));
+    }
+
+    // ——— type aliases ———
+
+    #[test]
+    fn type_alias_simple() {
+        let out = compile_first("(type Meters i32)");
+        assert_eq!(out, "type Meters = i32;");
+    }
+
+    #[test]
+    fn type_alias_with_generics() {
+        let out = compile_first("(type Foo (generic T) (Option T))");
+        assert_eq!(out, "type Foo<T> = Option<T>;");
+    }
+
+    #[test]
+    fn type_alias_with_where() {
+        let out = compile_first("(type Foo (generic T) (where (T Clone)) (Option T))");
+        assert!(out.contains("type Foo<T> where T: Clone = Option<T>;"));
+    }
+
+    #[test]
+    fn pub_type_alias() {
+        let out = compile_first("(pub type Meters i32)");
+        assert_eq!(out, "pub type Meters = i32;");
+    }
+
+    #[test]
+    fn empty_type_alias_warns() {
+        let w = warnings("(type)");
+        assert!(w.iter().any(|m| m.contains("type")));
+    }
+
+    // ——— combined features ———
+
+    #[test]
+    fn fn_with_generics_bounds_and_where() {
+        let out = compile_first("(fn foo (generic (T Display)) (where (T Clone)) ((x T)) String (to_string x))");
+        assert!(out.contains("fn foo<T: Display> where T: Clone"));
+    }
+
+    #[test]
+    fn struct_with_derive_and_where() {
+        let out = compile_first("(struct (derive Debug) Wrapper (generic T) (where (T Clone)) T)");
+        assert!(out.contains("#[derive(Debug)]"));
+        assert!(out.contains("struct Wrapper<T>(T) where T: Clone;"));
     }
 }

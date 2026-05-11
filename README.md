@@ -55,8 +55,8 @@ rlisp run file.lisp       # transpile, compile, and run
 | `(enum Option (generic T) (Some T) None)` | `enum Option<T> { Some(T), None }` |
 | `(match val ((Some x) (handle x)) (None ()))` | `match val { Some(x) => { handle(x) }, None => { } }` |
 | `(if (> x 0) (println! "yes") (println! "no"))` | `if (x > 0) { println!("yes") } else { println!("no") }` |
-| `(impl Point (fn new (...) ...))` | `impl Point { fn new(...) ... }` |
-| `(trait Display (fn fmt (...) Result))` | `trait Display { fn fmt(...) -> Result; }` |
+| `(impl Point ((fn new (...) ...)))` | `impl Point { fn new(...) ... }` |
+| `(trait Display ((fn fmt (...) Result)))` | `trait Display { fn fmt(...) -> Result; }` |
 | `(. obj field)` / `(. obj method arg)` | `obj.field` / `obj.method(arg)` |
 | `(new Point (x 1.0) (y 2.0))` | `Point { x: 1.0, y: 2.0 }` |
 | `(loop (body))` / `(while cond (body))` / `(for x in iter (body))` | `loop { body }` / `while cond { body }` / `for x in iter { body }` |
@@ -64,6 +64,13 @@ rlisp run file.lisp       # transpile, compile, and run
 | `(foo! args)` / `(println! "{}" x)` | `foo!(args)` / `println!("{}", x)` |
 | `(pub fn foo () i32 42)` | `pub fn foo() -> i32 { 42 }` |
 | `(rust "let x: i32 = 42; x")` | `let x: i32 = 42; x` |
+| `(generic (T Display))` | `<T: Display>` (inline trait bounds) |
+| `(where (T Clone) ('a 'b))` | `where T: Clone, 'a: 'b` |
+| `(struct (derive Debug) Point (x i32))` | `#[derive(Debug)] struct Point { x: i32 }` |
+| `(trait Foo Display ((fn bar () ())))` | `trait Foo: Display { fn bar(); }` |
+| `(trait Iterator ((type Item) (fn next () ())))` | `trait Iterator { type Item; fn next(); }` |
+| `(impl (generic T) (Vec T) ((fn push (...) ...)))` | `impl<T> Vec<T> { fn push(...) ... }` |
+| `(type Meters i32)` | `type Meters = i32;` |
 
 **Full reference:** [SYNTAX.md](SYNTAX.md) covers everything — generics, lifetimes, visibility, modules, turbofish, inline Rust, if-let, control flow, unsafe blocks, and the complete syntax map.
 
@@ -152,9 +159,9 @@ Think of `quasiquote` as "return this exact s-expression, except for the `unquot
   (pub host String)                        ;; public field
   (port u16))                              ;; private field
 
-(pub mod utils                            ;; inline module
+(pub mod utils (                          ;; inline module
   (pub fn helper () i32 1)
-  (fn private () i32 0))
+  (fn private () i32 0)))
 
 (mod external_lib)                        ;; external module decl
 

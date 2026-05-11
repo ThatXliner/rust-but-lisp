@@ -14,8 +14,8 @@
 | `(enum Option (generic T) (Some T) None)` | `enum Option<T> { Some(T), None }` |
 | `(match val ((Some x) (handle x)) (None ()))` | `match val { Some(x) => { handle(x) }, None => { } }` |
 | `(if cond (then) (else))` | `if cond { then } else { else }` |
-| `(impl Point (fn new (...) ...))` | `impl Point { fn new(...) ... }` |
-| `(trait Display (fn fmt (...) Result))` | `trait Display { fn fmt(...) -> Result; }` |
+| `(impl Point ((fn new (...) ...)))` | `impl Point { fn new(...) ... }` |
+| `(trait Display ((fn fmt (...) Result)))` | `trait Display { fn fmt(...) -> Result; }` |
 | `(. obj field)` | `obj.field` |
 | `(. obj method arg1 arg2)` | `obj.method(arg1, arg2)` |
 | `([] arr index)` | `arr[index]` |
@@ -30,7 +30,7 @@
 | `(pub fn foo () i32 42)` | `pub fn foo() -> i32 { 42 }` |
 | `(pub (crate) fn foo () i32 42)` | `pub(crate) fn foo() -> i32 { 42 }` |
 | `(pub struct Config (pub host String) (port u16))` | `pub struct Config { pub host: String, port: u16 }` |
-| `(pub mod utils (fn helper () i32 1))` | `pub mod utils { fn helper() -> i32 { 1 } }` |
+| `(pub mod utils ((fn helper () i32 1)))` | `pub mod utils { fn helper() -> i32 { 1 } }` |
 | `(mod external_lib)` | `mod external_lib;` |
 | `(use std::collections::HashMap)` | `use std::collections::HashMap;` |
 | `(use std::io::{self,Write,Read})` | `use std::io::{self, Write, Read};` |
@@ -47,10 +47,18 @@
 | `(if-let (Some v) x (body) (else))` | `if let Some(v) = x { body } else { else }` |
 | `(while-let (Some v) iter (body))` | `while let Some(v) = iter { body }` |
 | `(unsafe (body))` | `unsafe { body }` |
+| `(generic (T Display) K)` | `<T: Display, K>` |
+| `(where (T Display Clone) ('a 'b))` | `where T: Display + Clone, 'a: 'b` |
+| `(struct (derive Debug Clone) Point (x i32))` | `#[derive(Debug, Clone)] struct Point { x: i32 }` |
+| `(trait Foo Display ((fn bar () ())))` | `trait Foo: Display { fn bar(); }` |
+| `(trait Iterator ((type Item) (fn next () ())))` | `trait Iterator { type Item; fn next(); }` |
+| `(impl (generic T) (Vec T) ((fn push (...) ...)))` | `impl<T> Vec<T> { fn push(...) ... }` |
+| `(type Meters i32)` | `type Meters = i32;` |
+| `(type Stack (generic T) (Vec T))` | `type Stack<T> = Vec<T>;` |
 
 ## Generics
 
-Generics must be introduced with the `generic` command:
+Generics are introduced with the `generic` command:
 
 ```lisp
 (enum Option (generic T) (Some T) None)  ;; Option<T>
@@ -58,14 +66,86 @@ Generics must be introduced with the `generic` command:
 (fn first (generic T) ((list &[T])) &T)  ;; fn first<T>(list: &[T]) -> &T
 ```
 
-Without the marker, forms are treated as concrete types/fields:
+### Inline trait bounds
+
+Bounds on generic parameters use a list where the first element is the parameter name and the rest are bounds joined by ` + `:
 
 ```lisp
-(enum Result (Ok i32) (Err String)) ;; no generics
-(struct Point (x f64) (y f64))       ;; no generics
+(fn foo (generic (T Display)) ((x T)) () ())         ;; <T: Display>
+(fn foo (generic (T Display Clone)) ((x T)) () ())   ;; <T: Display + Clone>
+(fn foo (generic (K Display) V) ((k K) (v V)) () ()) ;; <K: Display, V>
 ```
 
-Generics with lifetimes:
+### Where clauses
+
+`(where ...)` clauses work on fn, struct, enum, trait, impl, and type aliases:
+
+```lisp
+(fn foo (generic T) (where (T Display)) ((x T)) String (to_string x))
+;; fn foo<T>(x: T) -> String where T: Display { to_string(x) }
+
+(struct Pair (generic T) (where (T Clone)) (first T) (second T))
+;; struct Pair<T> { first: T, second: T } where T: Clone
+
+(impl (generic T) (where (T Display)) (Vec T) (
+  (fn print_all ((&self)) () ...)))
+;; impl<T> Vec<T> where T: Display { fn print_all(&self) { ... } }
+```
+
+Where clauses can constrain lifetimes too:
+
+```lisp
+(where (T Display Clone) ('a 'b))
+;; where T: Display + Clone, 'a: 'b
+```
+
+### Derive attributes
+
+`(derive ...)` on fn, struct, and enum items:
+
+```lisp
+(struct (derive Debug Clone PartialEq) Point (x i32) (y i32))
+;; #[derive(Debug, Clone, PartialEq)]
+;; struct Point { x: i32, y: i32 }
+
+(enum (derive Debug) Status Ok Err)
+;; #[derive(Debug)]
+;; enum Status { Ok, Err }
+```
+
+### Supertraits
+
+An uppercase symbol or a list of bounds after the trait name declares supertraits:
+
+```lisp
+(trait Foo Display ((fn fmt () ())))
+;; trait Foo: Display { fn fmt(); }
+
+(trait Foo (+ Display Clone) ((fn bar () ())))
+;; trait Foo: Display + Clone { fn bar(); }
+```
+
+### Associated types
+
+Use `(type Name)` or `(type Name Bounds...)` inside trait body:
+
+```lisp
+(trait Iterator (generic T) ((type Item) (fn next ((&mut self)) (Option T Self::Item))))
+;; trait Iterator<T> { type Item; fn next(&mut self) -> Option<T, Self::Item>; }
+
+(trait Graph ((type Node Display Clone) (fn nodes () ())))
+;; trait Graph { type Node: Display + Clone; fn nodes(); }
+```
+
+### Type aliases
+
+```lisp
+(type Meters i32)                              ;; type Meters = i32;
+(type Stack (generic T) (Vec T))               ;; type Stack<T> = Vec<T>;
+(type Stack (generic T) (where (T Clone)) (Vec T))  ;; type Stack<T> = Vec<T> where T: Clone;
+```
+
+Lifetimes and generics with the `generic` command (same as fn/struct/enum):
 
 ```lisp
 (struct Borrow (generic 'a)
