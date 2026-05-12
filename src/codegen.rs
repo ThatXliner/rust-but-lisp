@@ -266,9 +266,12 @@ fn compile_list(items: &[Expr]) -> String {
 }
 
 /// Compile a function definition.
+/// Return type defaults to `()` when omitted.
+/// (fn bar ())          → fn bar();
+/// (fn bar () i32 42)   → fn bar() -> i32 { 42 }
 fn compile_fn_def(attrs: &str, args: &[Expr], vis: &str) -> String {
-    if args.len() < 3 {
-        warn("fn definition missing name, params, or return type");
+    if args.len() < 2 {
+        warn("fn definition missing name or params");
         return "/* malformed fn */".to_string();
     }
 
@@ -298,7 +301,7 @@ fn compile_fn_def(attrs: &str, args: &[Expr], vis: &str) -> String {
         String::new()
     };
 
-    // Parse parameter list: ((x i32) (y &str))
+    // Parse parameter list: ((x i32) (y &str)) or just ()
     let params = if i < rest.len() {
         compile_params(&rest[i])
     } else {
@@ -306,13 +309,14 @@ fn compile_fn_def(attrs: &str, args: &[Expr], vis: &str) -> String {
     };
     i += 1;
 
-    // Parse return type: i32, (Option &T), etc.
+    // Parse return type (optional, defaults to ())
     let ret_type = if i < rest.len() {
-        compile_type_expr(&rest[i])
+        let ret = compile_type_expr(&rest[i]);
+        i += 1;
+        ret
     } else {
         "()".to_string()
     };
-    i += 1;
 
     // Parse body (remaining expressions)
     let body = compile_body(&rest[i..]);
@@ -560,7 +564,7 @@ fn compile_struct_field(expr: &Expr) -> String {
                 return "_: ()".to_string();
             }
             let name = register_ident(&items[0]);
-            let type_parts: Vec<String> = items[1..].iter().map(compile_expr).collect();
+            let type_parts: Vec<String> = items[1..].iter().map(compile_type_expr).collect();
             format!("{}{}: {}", vis, name, type_parts.join(" "))
         }
         Expr::Symbol(_name) => format!("{}: ()", register_ident(expr)),
@@ -623,7 +627,7 @@ fn compile_enum_variant(expr: &Expr) -> String {
     match expr {
         Expr::List(items, _) if !items.is_empty() => {
             let name = register_ident(&items[0]);
-            let fields: Vec<String> = items[1..].iter().map(compile_expr).collect();
+            let fields: Vec<String> = items[1..].iter().map(compile_type_expr).collect();
             if fields.is_empty() {
                 name
             } else {
@@ -1161,10 +1165,6 @@ fn is_binary_op(s: &str) -> bool {
     )
 }
 
-fn is_uppercase_type(s: &str) -> bool {
-    s.chars().next().is_some_and(|c| c.is_ascii_uppercase())
-}
-
 /// Compile a sequence of expressions as a block body.
 /// All but the last get semicolons.
 fn compile_body(exprs: &[Expr]) -> String {
@@ -1270,7 +1270,11 @@ fn try_parse_supertraits(items: &[Expr]) -> Option<(String, usize)> {
         return None;
     }
     match &items[0] {
-        Expr::Symbol(s) if is_uppercase_type(s) => {
+        Expr::Symbol(s) => {
+            // Exclude keywords that start other sections
+            if matches!(s.as_str(), "where" | "fn" | "type" | "generic") {
+                return None;
+            }
             Some((format!(": {}", s), 1))
         }
         Expr::List(inner, _) if !inner.is_empty() => {
@@ -1553,21 +1557,40 @@ fn compile_struct_new(args: &[Expr]) -> String {
     format!("{} {{ {} }}", type_name, fields.join(", "))
 }
 
-/// Compile a type expression. Types can be single symbols or lists like (& T).
+/// Compile a type expression. Types can be single symbols or lists.
+///
+/// (generic T U)            → T, U          (standalone type params)
+/// (Option (generic T U))   → Option<T, U>  (generic type application)
+/// (& T)                    → & T           (reference, space-separated)
 fn compile_type_expr(expr: &Expr) -> String {
     match expr {
         Expr::List(items, _) if !items.is_empty() => {
-            let first = compile_expr(&items[0]);
-            let rest: Vec<_> = items[1..].iter().map(compile_expr).collect();
-            if rest.is_empty() {
-                first
-            } else if is_uppercase_type(&first) {
-                // (Option &T) → Option<&T>
-                format!("{}<{}>", first, rest.join(", "))
-            } else {
-                // (& T) → &T, (&'a str) → &'a str
-                format!("{} {}", first, rest.join(" "))
+            // (generic T U) as a standalone type just emits the params
+            if matches!(&items[0], Expr::Symbol(s) if s == "generic") {
+                let params: Vec<_> = items[1..]
+                    .iter()
+                    .map(compile_type_expr)
+                    .collect();
+                return params.join(", ");
             }
+            let first = compile_expr(&items[0]);
+            if items.len() == 1 {
+                return first;
+            }
+            // (Option (generic T U)) → Option<T, U>
+            if let Expr::List(generic_items, _) = &items[1]
+                && !generic_items.is_empty()
+                && matches!(&generic_items[0], Expr::Symbol(s) if s == "generic")
+            {
+                let params: Vec<_> = generic_items[1..]
+                    .iter()
+                    .map(compile_type_expr)
+                    .collect();
+                return format!("{}<{}>", first, params.join(", "));
+            }
+            // (& T) → & T, (& 'a str) → & 'a str
+            let rest: Vec<_> = items[1..].iter().map(compile_expr).collect();
+            format!("{} {}", first, rest.join(" "))
         }
         _ => compile_expr(expr),
     }
@@ -1626,7 +1649,7 @@ mod tests {
 
     #[test]
     fn fn_with_generics() {
-        let out = compile_first("(fn first (generic T) ((list &[T])) (Option &T) (None))");
+        let out = compile_first("(fn first (generic T) ((list &[T])) (Option (generic &T)) (None))");
         assert!(out.contains("fn first<T>(list: &[T]) -> Option<&T>"));
     }
 
@@ -1765,7 +1788,7 @@ mod tests {
     #[test]
     fn impl_trait_for_type() {
         let out =
-            compile_first("(impl Display for Point ((fn fmt ((&self) (f &mut Formatter)) (Result () Error))))");
+            compile_first("(impl Display for Point ((fn fmt ((&self) (f &mut Formatter)) (Result (generic () Error)))))");
         assert!(out.contains("impl Display for Point {"));
         assert!(out.contains("fn fmt(&self, f: &mut Formatter) -> Result<(), Error>;"));
     }
@@ -2141,7 +2164,7 @@ mod tests {
 
     #[test]
     fn generic_type_param() {
-        let out = compile_first("(fn f ((x (Option i32))) () ())");
+        let out = compile_first("(fn f ((x (Option (generic i32)))) () ())");
         assert!(out.contains("x: Option<i32>"));
     }
 
@@ -2392,13 +2415,13 @@ mod tests {
 
     #[test]
     fn impl_with_generics() {
-        let out = compile_first("(impl (generic T) (Vec T) ((fn push ((&mut self) (value T)) () ())))");
+        let out = compile_first("(impl (generic T) (Vec (generic T)) ((fn push ((&mut self) (value T)) () ())))");
         assert!(out.contains("impl<T> Vec<T> {"));
     }
 
     #[test]
     fn impl_trait_with_generics_and_where() {
-        let out = compile_first("(impl (generic T) (where (T Display)) Display for (MyType T) ((fn fmt () ())))");
+        let out = compile_first("(impl (generic T) (where (T Display)) Display for (MyType (generic T)) ((fn fmt () ())))");
         assert!(out.contains("impl<T> Display for MyType<T> where T: Display {"));
     }
 
@@ -2412,13 +2435,13 @@ mod tests {
 
     #[test]
     fn type_alias_with_generics() {
-        let out = compile_first("(type Foo (generic T) (Option T))");
+        let out = compile_first("(type Foo (generic T) (Option (generic T)))");
         assert_eq!(out, "type Foo<T> = Option<T>;");
     }
 
     #[test]
     fn type_alias_with_where() {
-        let out = compile_first("(type Foo (generic T) (where (T Clone)) (Option T))");
+        let out = compile_first("(type Foo (generic T) (where (T Clone)) (Option (generic T)))");
         assert!(out.contains("type Foo<T> where T: Clone = Option<T>;"));
     }
 

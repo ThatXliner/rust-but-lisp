@@ -69,7 +69,7 @@ rlisp run file.lisp       # transpile, compile, and run
 | `(struct (derive Debug) Point (x i32))` | `#[derive(Debug)] struct Point { x: i32 }` |
 | `(trait Foo Display ((fn bar () ())))` | `trait Foo: Display { fn bar(); }` |
 | `(trait Iterator ((type Item) (fn next () ())))` | `trait Iterator { type Item; fn next(); }` |
-| `(impl (generic T) (Vec T) ((fn push (...) ...)))` | `impl<T> Vec<T> { fn push(...) ... }` |
+| `(impl (generic T) (Vec (generic T)) ((fn push (...) ...)))` | `impl<T> Vec<T> { fn push(...) ... }` |
 | `(type Meters i32)` | `type Meters = i32;` |
 
 **Full reference:** [SYNTAX.md](SYNTAX.md) covers everything — generics, lifetimes, visibility, modules, turbofish, inline Rust, if-let, control flow, unsafe blocks, and the complete syntax map.

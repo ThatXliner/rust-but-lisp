@@ -52,9 +52,9 @@
 | `(struct (derive Debug Clone) Point (x i32))` | `#[derive(Debug, Clone)] struct Point { x: i32 }` |
 | `(trait Foo Display ((fn bar () ())))` | `trait Foo: Display { fn bar(); }` |
 | `(trait Iterator ((type Item) (fn next () ())))` | `trait Iterator { type Item; fn next(); }` |
-| `(impl (generic T) (Vec T) ((fn push (...) ...)))` | `impl<T> Vec<T> { fn push(...) ... }` |
+| `(impl (generic T) (Vec (generic T)) ((fn push (...) ...)))` | `impl<T> Vec<T> { fn push(...) ... }` |
 | `(type Meters i32)` | `type Meters = i32;` |
-| `(type Stack (generic T) (Vec T))` | `type Stack<T> = Vec<T>;` |
+| `(type Stack (generic T) (Vec (generic T)))` | `type Stack<T> = Vec<T>;` |
 
 ## Generics
 
@@ -87,7 +87,7 @@ Bounds on generic parameters use a list where the first element is the parameter
 (struct Pair (generic T) (where (T Clone)) (first T) (second T))
 ;; struct Pair<T> { first: T, second: T } where T: Clone
 
-(impl (generic T) (where (T Display)) (Vec T) (
+(impl (generic T) (where (T Display)) (Vec (generic T)) (
   (fn print_all ((&self)) () ...)))
 ;; impl<T> Vec<T> where T: Display { fn print_all(&self) { ... } }
 ```
@@ -130,7 +130,7 @@ An uppercase symbol or a list of bounds after the trait name declares supertrait
 Use `(type Name)` or `(type Name Bounds...)` inside trait body:
 
 ```lisp
-(trait Iterator (generic T) ((type Item) (fn next ((&mut self)) (Option T Self::Item))))
+(trait Iterator (generic T) ((type Item) (fn next ((&mut self)) (Option (generic T Self::Item))))))
 ;; trait Iterator<T> { type Item; fn next(&mut self) -> Option<T, Self::Item>; }
 
 (trait Graph ((type Node Display Clone) (fn nodes () ())))
@@ -141,8 +141,8 @@ Use `(type Name)` or `(type Name Bounds...)` inside trait body:
 
 ```lisp
 (type Meters i32)                              ;; type Meters = i32;
-(type Stack (generic T) (Vec T))               ;; type Stack<T> = Vec<T>;
-(type Stack (generic T) (where (T Clone)) (Vec T))  ;; type Stack<T> = Vec<T> where T: Clone;
+(type Stack (generic T) (Vec (generic T)))               ;; type Stack<T> = Vec<T>;
+(type Stack (generic T) (where (T Clone)) (Vec (generic T)))  ;; type Stack<T> = Vec<T> where T: Clone;
 ```
 
 Lifetimes and generics with the `generic` command (same as fn/struct/enum):

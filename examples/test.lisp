@@ -26,7 +26,7 @@
   (x &'a str))
 
 ; Generic function
-(fn first (generic T) ((list &[T])) (MyOption &T)
+(fn first (generic T) ((list &[T])) (MyOption (generic &T))
   (if (!= (list.len) 0)
     (MyOption::MySome (& ([] list 0)))
     MyOption::MyNone))
