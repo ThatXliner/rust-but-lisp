@@ -50,35 +50,24 @@ rlisp run file.lisp       # transpile, compile, and run
 | LISP | Rust |
 |------|------|
 | `(fn add ((x i32) (y i32)) i32 (+ x y))` | `fn add(x: i32, y: i32) -> i32 { (x + y) }` |
-| `(let x i32 42)` | `let x: i32 = 42;` |
+| `(let x 42)` / `(let mut x 42)` | `let x = 42;` / `let mut x = 42;` |
 | `(struct Point (x f64) (y f64))` | `struct Point { x: f64, y: f64 }` |
 | `(enum Option (generic T) (Some T) None)` | `enum Option<T> { Some(T), None }` |
 | `(match val ((Some x) (handle x)) (None ()))` | `match val { Some(x) => { handle(x) }, None => { } }` |
 | `(if (> x 0) (println! "yes") (println! "no"))` | `if (x > 0) { println!("yes") } else { println!("no") }` |
-| `(if cond1 then1 (else-if cond2 then2 else))` | `if cond1 { then1 } else if cond2 { then2 } else { else }` |
-| `(match val ((Some x) if (> x 0) body) (_ else))` | `match val { Some(x) if (x > 0) => { body }, _ => { else } }` |
 | `(impl Point ((fn new (...) ...)))` | `impl Point { fn new(...) ... }` |
 | `(trait Display ((fn fmt (...) Result)))` | `trait Display { fn fmt(...) -> Result; }` |
 | `(. obj field)` / `(. obj method arg)` | `obj.field` / `obj.method(arg)` |
 | `(raw_new Point (x 1.0) (y 2.0))` | `Point { x: 1.0, y: 2.0 }` |
-| `(loop (body))` / `(while cond (body))` / `(for x in iter (body))` | `loop { body }` / `while cond { body }` / `for x in iter { body }` |
 | `(lambda (x y) (+ x y))` | `\|x, y\| { x + y }` |
-| `(foo! args)` / `(println! "{}" x)` | `foo!(args)` / `println!("{}", x)` |
+| `(for x in iter (body))` / `(loop (body))` / `(while cond (body))` | `for x in iter { body }` / `loop { body }` / `while cond { body }` |
 | `(pub fn foo () i32 42)` | `pub fn foo() -> i32 { 42 }` |
-| `(rust "let x: i32 = 42; x")` | `let x: i32 = 42; x` |
-| `(generic (T Display))` | `<T: Display>` (inline trait bounds) |
-| `(where (T Clone) ('a 'b))` | `where T: Clone, 'a: 'b` |
-| `(struct (derive Debug) Point (x i32))` | `#[derive(Debug)] struct Point { x: i32 }` |
-| `(trait Foo Display ((fn bar () ())))` | `trait Foo: Display { fn bar(); }` |
-| `(trait Iterator ((type Item) (fn next () ())))` | `trait Iterator { type Item; fn next(); }` |
-| `(impl (generic T) (Vec (generic T)) ((fn push (...) ...)))` | `impl<T> Vec<T> { fn push(...) ... }` |
-| `(type Meters i32)` | `type Meters = i32;` |
-
-**Full reference:** [SYNTAX.md](SYNTAX.md) covers everything — generics, lifetimes, visibility, modules, turbofish, inline Rust, if-let, control flow, unsafe blocks, and the complete syntax map.
 
 Binary operators (`+`, `-`, `*`, `/`, `==`, etc.) emit infix: `(+ a b)` → `(a + b)`, `(+ a b c)` → `(a + b + c)`.
 
-Kebab-case identifiers with hyphens are automatically converted to Rust names using `__` (double underscore): `page-header` → `page__header`. Collisions (e.g. `foo-bar` and `foo__bar` both → `foo__bar`) emit a compile warning.
+Kebab-case identifiers with hyphens are converted to `__` (double underscore): `page-header` → `page__header`. Collisions (e.g. `foo-bar` and `foo__bar` both → `foo__bar`) emit a warning.
+
+**Full reference:** [SYNTAX.md](SYNTAX.md) covers generics, lifetimes, visibility, modules, turbofish, inline Rust, const/static, if-let, while-let, else-if, match guards, derive, where clauses, supertraits, associated types, type aliases, and more.
 
 ## Macros
 
