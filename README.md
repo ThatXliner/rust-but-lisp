@@ -32,7 +32,7 @@ Pretty diagnostics with [Ariadne](https://codeberg.org/zesterer/ariadne):
 ## Install
 
 ```bash
-git clone https://github.com/ThatXliner/rlisp.git
+git clone https://github.com/ThatXliner/rust-but-lisp.git
 cd rlisp
 cargo install --path .
 ```
@@ -234,7 +234,7 @@ And **the uniformity** grows on you. Expressions, types, patterns, statements â€
 
 Hey, if you like this project and read this far, consider starring it on GitHub! 
 
-Additionally, please check out some of my more serious projects, namely [Xclif](https://github.com/ThatXliner/xclif) (file-based routing CLI framework), and [Quillium](https://quillium.bryanhu.com/) (inline branching for prose; think Git for writing)
+Additionally, please check out some of my more serious projects, namely [Xclif](https://github.com/ThatXliner/xclif) (file-based routing CLI framework), and [Quillium](https://quillium.bryanhu.com?utm_source=github&utm_medium=readme&utm_id=rust-but-lisp) (inline branching for prose; think Git for writing)
 
 ## License
 
