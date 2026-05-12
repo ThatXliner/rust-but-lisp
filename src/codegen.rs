@@ -1190,7 +1190,8 @@ fn compile_macro_call(name: &str, args: &[Expr]) -> String {
 }
 
 /// Compile a function call: (func arg1 arg2) → func(arg1, arg2)
-/// For known binary operators with 2 args, emits infix form: (+ a b) → (a + b)
+/// For known binary operators with 2+ args, emits infix form:
+/// (+ a b c) → (a + b + c)
 fn compile_fn_call(items: &[Expr]) -> String {
     // Binary operators are preserved verbatim by sanitize_ident, so the
     // raw symbol text matches what we emit.
@@ -1203,8 +1204,8 @@ fn compile_fn_call(items: &[Expr]) -> String {
     let head = compile_expr(&items[0]);
     let args: Vec<String> = items[1..].iter().map(compile_expr).collect();
 
-    if is_op && args.len() == 2 {
-        return format!("({} {} {})", args[0], raw_head, args[1]);
+    if is_op && args.len() >= 2 {
+        return format!("({})", args.join(&format!(" {} ", raw_head)));
     }
 
     format!("{}({})", head, args.join(", "))
@@ -2224,6 +2225,13 @@ mod tests {
     fn binary_operator_infix() {
         let out = compile_first("(fn f () i32 (+ a b))");
         assert!(out.contains("(a + b)"));
+    }
+
+    #[test]
+    fn binary_operator_infix_variadic() {
+        let out = compile_first("(fn f () i32 (+ a b c))");
+        assert!(out.contains("(a + b + c)"));
+        assert!(!out.contains("+(a, b, c)"));
     }
 
     #[test]

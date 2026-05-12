@@ -76,7 +76,7 @@ rlisp run file.lisp       # transpile, compile, and run
 
 **Full reference:** [SYNTAX.md](SYNTAX.md) covers everything — generics, lifetimes, visibility, modules, turbofish, inline Rust, if-let, control flow, unsafe blocks, and the complete syntax map.
 
-Binary operators (`+`, `-`, `*`, `/`, `==`, etc.) emit infix: `(+ a b)` → `(a + b)`.
+Binary operators (`+`, `-`, `*`, `/`, `==`, etc.) emit infix: `(+ a b)` → `(a + b)`, `(+ a b c)` → `(a + b + c)`.
 
 Kebab-case identifiers with hyphens are automatically converted to Rust names using `__` (double underscore): `page-header` → `page__header`. Collisions (e.g. `foo-bar` and `foo__bar` both → `foo__bar`) emit a compile warning.
 

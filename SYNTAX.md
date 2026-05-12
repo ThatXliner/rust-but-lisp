@@ -177,6 +177,7 @@ All common binary operators emit infix. Written as prefix s-expressions, output 
 
 ```lisp
 (+ a b)      →  (a + b)
+(+ a b c)    →  (a + b + c)
 (-= x 1)     →  (x -= 1)
 (&& cond1 (== x y))  →  (cond1 && (x == y))
 (> x 0)      →  (x > 0)
