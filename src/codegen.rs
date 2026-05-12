@@ -1163,6 +1163,14 @@ fn compile_dot(args: &[Expr]) -> String {
 
     let obj = compile_expr(&args[0]);
 
+    // Validate that the field/method name is a simple identifier
+    if !matches!(&args[1], Expr::Symbol(_)) {
+        warn(format!(
+            "field or method name must be a simple identifier, found '{}'",
+            compile_expr(&args[1])
+        ));
+    }
+
     if args.len() == 2 {
         // Field access: (. obj field)
         let field = compile_expr(&args[1]);
