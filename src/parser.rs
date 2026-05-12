@@ -134,7 +134,11 @@ fn tokenize(source: &str) -> Vec<Token> {
 
 fn is_number(s: &str) -> bool {
     let first = s.chars().next();
+    // Must start with a digit or `-`, contain at least one digit, and consist
+    // only of digits, `.`, `-`, and `_`.  The digit requirement prevents bare
+    // `-` from being parsed as a number so it stays a Symbol (operator).
     matches!(first, Some('0'..='9') | Some('-'))
+        && s.chars().any(|c| c.is_ascii_digit())
         && s.chars().all(|c| c.is_ascii_digit() || c == '.' || c == '-' || c == '_')
 }
 

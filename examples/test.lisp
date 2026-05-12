@@ -15,7 +15,7 @@
 ; Impl block
 (impl Point (
   (fn new ((x f64) (y f64)) Point
-    (new Point (x x) (y y)))
+    (raw_new Point (x x) (y y)))
   (fn distance ((&self) (other &Point)) f64
     (let dx (- (. self x) (. other x)))
     (let dy (- (. self y) (. other y)))
@@ -33,8 +33,8 @@
 
 ; Main function
 (fn main () ()
-  (let p1 (new Point (x 1.0) (y 2.0)))
-  (let p2 (new Point (x 4.0) (y 6.0)))
+  (let p1 (raw_new Point (x 1.0) (y 2.0)))
+  (let p2 (raw_new Point (x 4.0) (y 6.0)))
   (let d (. p1 distance (& p2)))
   (println! "Distance: {}" d)
 

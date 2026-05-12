@@ -16,8 +16,8 @@ Rust semantics in LISP syntax. Write s-expressions, output Rust source: `(s-expr
     (. (+ (. dx powf 2.0) (. dy powf 2.0)) sqrt)))
 
 (fn main () ()
-  (let p1 (new Point (x 0.0) (y 0.0)))
-  (let p2 (new Point (x 3.0) (y 4.0)))
+  (let p1 (raw_new Point (x 0.0) (y 0.0)))
+  (let p2 (raw_new Point (x 3.0) (y 4.0)))
   (println! "Distance: {}" (. p1 distance (& p2))))
 ```
 
@@ -55,10 +55,12 @@ rlisp run file.lisp       # transpile, compile, and run
 | `(enum Option (generic T) (Some T) None)` | `enum Option<T> { Some(T), None }` |
 | `(match val ((Some x) (handle x)) (None ()))` | `match val { Some(x) => { handle(x) }, None => { } }` |
 | `(if (> x 0) (println! "yes") (println! "no"))` | `if (x > 0) { println!("yes") } else { println!("no") }` |
+| `(if cond1 then1 (else-if cond2 then2 else))` | `if cond1 { then1 } else if cond2 { then2 } else { else }` |
+| `(match val ((Some x) if (> x 0) body) (_ else))` | `match val { Some(x) if (x > 0) => { body }, _ => { else } }` |
 | `(impl Point ((fn new (...) ...)))` | `impl Point { fn new(...) ... }` |
 | `(trait Display ((fn fmt (...) Result)))` | `trait Display { fn fmt(...) -> Result; }` |
 | `(. obj field)` / `(. obj method arg)` | `obj.field` / `obj.method(arg)` |
-| `(new Point (x 1.0) (y 2.0))` | `Point { x: 1.0, y: 2.0 }` |
+| `(raw_new Point (x 1.0) (y 2.0))` | `Point { x: 1.0, y: 2.0 }` |
 | `(loop (body))` / `(while cond (body))` / `(for x in iter (body))` | `loop { body }` / `while cond { body }` / `for x in iter { body }` |
 | `(lambda (x y) (+ x y))` | `\|x, y\| { x + y }` |
 | `(foo! args)` / `(println! "{}" x)` | `foo!(args)` / `println!("{}", x)` |
@@ -129,8 +131,8 @@ Think of `quasiquote` as "return this exact s-expression, except for the `unquot
 (for x in 0..10
   (println! "{}" x))
 
-;; for with destructuring
-(for (i val) in (. v iter) enumerate
+;; for with destructuring (double parens for tuple patterns)
+(for ((i val)) in (. v iter) enumerate
   (println! "{}: {}" i val))
 ```
 

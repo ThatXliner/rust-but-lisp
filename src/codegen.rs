@@ -5,7 +5,20 @@ use std::collections::HashMap;
 /// Convert a lisp kebab-case identifier to a valid Rust identifier.
 /// Hyphens become `__` (double underscore). Preserves operator symbols.
 fn sanitize_ident(s: &str) -> String {
+    // Never mangle binary operators — they are used verbatim in output.
+    if is_binary_op(s) {
+        return s.to_string();
+    }
     s.replace('-', "__")
+}
+
+/// Wrap generic parameters in angle brackets for declaration sites.
+fn wrap_generics(s: &str) -> String {
+    if s.is_empty() {
+        String::new()
+    } else {
+        format!("<{}>", s)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -242,7 +255,7 @@ fn compile_list(items: &[Expr]) -> String {
             "lambda" => return compile_lambda(&items[1..]),
             "rust" => return compile_rust_block(&items[1..]),
             "." => return compile_dot(&items[1..]),
-            "new" => return compile_struct_new(&items[1..]),
+            "raw_new" => return compile_raw_new(&items[1..]),
             "[]" => return compile_index(&items[1..]),
             "::" => return compile_turbofish(&items[1..]),
             "break" => return compile_break(&items[1..]),
@@ -250,6 +263,7 @@ fn compile_list(items: &[Expr]) -> String {
             "return" => return compile_return(&items[1..]),
             "as" => return compile_cast(&items[1..]),
             "if-let" => return compile_if_let(&items[1..]),
+            "else-if" => return compile_else_if(&items[1..]),
             "while-let" => return compile_while_let(&items[1..]),
             "unsafe" => return compile_unsafe(&items[1..]),
             _ => {}
@@ -505,9 +519,11 @@ fn compile_struct(attrs: &str, args: &[Expr], vis: &str) -> String {
     let all_symbols = rest.iter().all(|e| matches!(e, Expr::Symbol(_)));
     let all_lists = rest.iter().all(|e| matches!(e, Expr::List(..)));
 
+    let g = wrap_generics(&generics);
+
     if rest.is_empty() {
         // Unit struct (no fields): (struct Unit) → struct Unit;
-        format!("{}{}struct {}{}{};", attrs, vis, register_ident(name), generics, where_part)
+        format!("{}{}struct {}{}{};", attrs, vis, register_ident(name), g, where_part)
     } else if all_symbols {
         // Tuple struct: (struct Point f64 f64) → struct Point(f64, f64);
         let fields: Vec<String> = rest.iter().map(compile_expr).collect();
@@ -516,7 +532,7 @@ fn compile_struct(attrs: &str, args: &[Expr], vis: &str) -> String {
             attrs,
             vis,
             register_ident(name),
-            generics,
+            g,
             fields.join(", "),
             where_part,
         )
@@ -529,7 +545,7 @@ fn compile_struct(attrs: &str, args: &[Expr], vis: &str) -> String {
             attrs,
             vis,
             register_ident(name),
-            generics,
+            g,
             fields_str,
             where_part,
         )
@@ -546,7 +562,7 @@ fn compile_struct(attrs: &str, args: &[Expr], vis: &str) -> String {
             attrs,
             vis,
             register_ident(name),
-            generics,
+            g,
             fields_str,
             where_part,
         )
@@ -615,7 +631,7 @@ fn compile_enum(attrs: &str, args: &[Expr], vis: &str) -> String {
         attrs,
         vis,
         register_ident(name),
-        generics,
+        wrap_generics(&generics),
         variants_str,
         where_part,
     )
@@ -656,12 +672,25 @@ fn compile_match(args: &[Expr]) -> String {
 }
 
 /// Compile a match arm: ((pattern) body...) → pattern => { body... }
+/// Supports guards: ((pattern) if condition body...) → pattern if condition => { body... }
 fn compile_match_arm(expr: &Expr) -> String {
     match expr {
         Expr::List(items, _) if items.len() >= 2 => {
             let pattern = compile_pattern(&items[0]);
-            let body = compile_body(&items[1..]);
-            format!("{} => {{ {} }}", pattern, body)
+            // Check for guard: items[1] == "if"
+            let (guard, body_start) = if items.len() >= 3
+                && matches!(&items[1], Expr::Symbol(s) if s == "if")
+            {
+                (format!(" if {}", compile_expr(&items[2])), 3)
+            } else {
+                (String::new(), 1)
+            };
+            let body = compile_body(&items[body_start..]);
+            if body.is_empty() {
+                format!("{} =>{} {{}}", pattern, guard)
+            } else {
+                format!("{} =>{} {{ {} }}", pattern, guard, body)
+            }
         }
         Expr::List(items, _) if items.len() == 1 => {
             let pattern = compile_pattern(&items[0]);
@@ -672,13 +701,26 @@ fn compile_match_arm(expr: &Expr) -> String {
     }
 }
 
-/// Compile a pattern: (Some x) → Some(x), _ → _, etc.
+/// Compile a pattern for match, if-let, while-let, and for.
+///
+///   (Some x)         → Some(x)        (enum variant with 1 field)
+///   (Some x y)       → Some(x, y)     (enum variant with 2 fields)
+///   ((x y))          → (x, y)         (tuple destructure — double parens)
+///   x                → x              (binding)
+///   _                → _              (wildcard)
 fn compile_pattern(expr: &Expr) -> String {
     match expr {
         Expr::Symbol(s) if s == "_" => "_".to_string(),
         Expr::Symbol(s) => sanitize_ident(s),
         Expr::List(items, _) if items.is_empty() => "()".to_string(),
         Expr::List(items, _) => {
+            // Tuple destructure: ((x y)) → (x, y)
+            if items.len() == 1
+                && let Expr::List(inner, _) = &items[0]
+                && !inner.is_empty() {
+                    let parts: Vec<String> = inner.iter().map(compile_pattern).collect();
+                    return format!("({})", parts.join(", "));
+                }
             let head = compile_expr(&items[0]);
             let rest: Vec<String> = items[1..].iter().map(compile_pattern).collect();
             if rest.is_empty() {
@@ -714,12 +756,18 @@ fn compile_if(args: &[Expr]) -> String {
 
     if args.len() >= 3 {
         let else_body = compile_expr(&args[2]);
-        let else_block = if else_body.starts_with('{') {
+        let is_else_chain = else_body.starts_with("else");
+        let else_block = if else_body.starts_with('{') || is_else_chain {
             else_body
         } else {
             format!("{{ {} }}", else_body)
         };
-        format!("if {} {} else {}", cond, then_block, else_block)
+        // Don't double up on `else` when the body already supplies it (else-if chains)
+        if is_else_chain {
+            format!("if {} {} {}", cond, then_block, else_block)
+        } else {
+            format!("if {} {} else {}", cond, then_block, else_block)
+        }
     } else {
         format!("if {} {}", cond, then_block)
     }
@@ -759,10 +807,24 @@ fn compile_for(args: &[Expr]) -> String {
         return format!("/* malformed for: {:?} */", args);
     }
 
+    let (iter_idx, body_start) = if let Expr::Symbol(s) = &args[1]
+        && s == "in" {
+            (2, 3)
+        } else {
+            warn(format!(
+                "for expression missing 'in' keyword — found '{}'; treating it as the iterator",
+                compile_expr(&args[1])
+            ));
+            (1, 2)
+        };
+
     let pattern = compile_for_pattern(&args[0]);
-    // args[1] should be "in"
-    let iter = compile_expr(&args[2]);
-    let body = compile_body(&args[3..]);
+    if iter_idx >= args.len() {
+        warn("for expression missing iterator after 'in'");
+        return format!("for {} in _ {{}}", pattern);
+    }
+    let iter = compile_expr(&args[iter_idx]);
+    let body = compile_body(&args[body_start..]);
     if body.is_empty() {
         format!("for {} in {} {{}}", pattern, iter)
     } else {
@@ -771,23 +833,10 @@ fn compile_for(args: &[Expr]) -> String {
 }
 
 /// Compile the pattern portion of a for loop.
-/// (i x) → (i, x),  (Some(x)) → Some(x),  i → i
+/// Delegates to `compile_pattern`; use double parens for tuple destructure:
+/// ((i x)) → (i, x).
 fn compile_for_pattern(expr: &Expr) -> String {
-    match expr {
-        Expr::Symbol(s) => sanitize_ident(s),
-        Expr::List(items, _) if items.is_empty() => "()".to_string(),
-        Expr::List(items, _) => {
-            // If the head starts with uppercase, treat as enum variant pattern
-            if let Expr::Symbol(head) = &items[0]
-                && head.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
-                    return compile_pattern(expr);
-                }
-            // Otherwise treat as tuple destructure: (i x y) → (i, x, y)
-            let parts: Vec<String> = items.iter().map(compile_expr).collect();
-            format!("({})", parts.join(", "))
-        }
-        _ => compile_expr(expr),
-    }
+    compile_pattern(expr)
 }
 
 /// Compile `impl` block.
@@ -860,10 +909,11 @@ fn compile_impl_block(args: &[Expr]) -> String {
         format!(" {}", where_clause)
     };
 
+    let g = wrap_generics(&generics);
     let impl_header = if let Some(t) = trait_name {
-        format!("impl{} {} for {}{}", generics, t, type_name, where_part)
+        format!("impl{} {} for {}{}", g, t, type_name, where_part)
     } else {
-        format!("impl{} {}{}", generics, type_name, where_part)
+        format!("impl{} {}{}", g, type_name, where_part)
     };
 
     format!("{} {{\n{}\n}}", impl_header, indent(&methods_str))
@@ -933,7 +983,7 @@ fn compile_trait(args: &[Expr], vis: &str) -> String {
 
     let mut header_extra = String::new();
     if !generics.is_empty() {
-        header_extra.push_str(&generics);
+        header_extra.push_str(&wrap_generics(&generics));
     }
     if !supertraits.is_empty() {
         header_extra.push_str(&supertraits);
@@ -1134,12 +1184,10 @@ fn compile_macro_call(name: &str, args: &[Expr]) -> String {
 /// Compile a function call: (func arg1 arg2) → func(arg1, arg2)
 /// For known binary operators with 2 args, emits infix form: (+ a b) → (a + b)
 fn compile_fn_call(items: &[Expr]) -> String {
-    // Check for binary operators on the raw symbol BEFORE sanitization,
-    // since operators like `-` would lose their identity when sanitized to `__`.
-    // Also check Number for the case where `-` was parsed as a number literal.
+    // Binary operators are preserved verbatim by sanitize_ident, so the
+    // raw symbol text matches what we emit.
     let raw_head = match &items[0] {
         Expr::Symbol(s) => s.as_str(),
-        Expr::Number(s) => s.as_str(), // `-` is parsed as a number
         _ => "",
     };
     let is_op = is_binary_op(raw_head);
@@ -1253,7 +1301,7 @@ fn try_parse_generics(expr: &Expr) -> Option<String> {
                 Expr::Symbol(s) => s.clone(),
                 _ => compile_expr(e),
             }).collect();
-            Some(format!("<{}>", params.join(", ")))
+            Some(params.join(", "))
         }
         _ => None,
     }
@@ -1294,12 +1342,14 @@ fn try_parse_supertraits(items: &[Expr]) -> Option<(String, usize)> {
 }
 
 /// Join generics and where clause with correct spacing.
+/// Generics are wrapped in `<>` here so `try_parse_generics` can return raw params.
 fn join_gen_and_where(generics: &str, where_clause: &str) -> String {
-    match (generics.is_empty(), where_clause.is_empty()) {
+    let g = wrap_generics(generics);
+    match (g.is_empty(), where_clause.is_empty()) {
         (true, true) => String::new(),
-        (false, true) => generics.to_string(),
+        (false, true) => g,
         (true, false) => format!(" {}", where_clause),
-        (false, false) => format!("{} {}", generics, where_clause),
+        (false, false) => format!("{} {}", g, where_clause),
     }
 }
 
@@ -1394,14 +1444,14 @@ fn compile_break(args: &[Expr]) -> String {
     }
 }
 
-/// Compile continue expression: (continue) → continue; , (continue expr) → continue expr;
+/// Compile continue expression: (continue) → continue;
+/// Rust `continue` never takes a value — extra arguments are silently ignored
+/// (they would be a compile error).
 fn compile_continue(args: &[Expr]) -> String {
-    if args.is_empty() {
-        "continue".to_string()
-    } else {
-        let val = compile_expr(&args[0]);
-        format!("continue {}", val)
+    if !args.is_empty() {
+        warn("continue does not accept a value in Rust — arguments ignored");
     }
+    "continue".to_string()
 }
 
 /// Compile return expression: (return) → return; , (return expr) → return expr;
@@ -1449,6 +1499,49 @@ fn compile_if_let(args: &[Expr]) -> String {
         format!("if let {} = {} {} else {}", pattern, value, then_block, else_block)
     } else {
         format!("if let {} = {} {}", pattern, value, then_block)
+    }
+}
+
+/// Compile else-if expression: (else-if cond then) or (else-if cond then else)
+///
+/// Used as the else branch of `if`:
+///   (if a b (else-if c d))           →  if a { b } else if c { d }
+///   (if a b (else-if c d (else-if e f g)))  →  if a { b } else if c { d } else if e { f } else { g }
+fn compile_else_if(args: &[Expr]) -> String {
+    if args.is_empty() {
+        warn("else-if expression with no condition or body");
+        return "else if true {}".to_string();
+    }
+
+    let cond = compile_expr(&args[0]);
+    let then_body = if args.len() >= 2 {
+        compile_expr(&args[1])
+    } else {
+        warn("else-if expression with no then-branch");
+        "()".to_string()
+    };
+
+    let then_block = if then_body.starts_with('{') {
+        then_body
+    } else {
+        format!("{{ {} }}", then_body)
+    };
+
+    if args.len() >= 3 {
+        let else_body = compile_expr(&args[2]);
+        let is_else_chain = else_body.starts_with("else");
+        let else_block = if else_body.starts_with('{') || is_else_chain {
+            else_body
+        } else {
+            format!("{{ {} }}", else_body)
+        };
+        if is_else_chain {
+            format!("else if {} {} {}", cond, then_block, else_block)
+        } else {
+            format!("else if {} {} else {}", cond, then_block, else_block)
+        }
+    } else {
+        format!("else if {} {}", cond, then_block)
     }
 }
 
@@ -1537,8 +1630,8 @@ fn unescape_lisp_string(s: &str) -> String {
     out
 }
 
-/// Compile struct construction: (new Type (field val) (field val)) → Type { field: val, field: val }
-fn compile_struct_new(args: &[Expr]) -> String {
+/// Compile struct construction: (raw_new Type (field val) (field val)) → Type { field: val, field: val }
+fn compile_raw_new(args: &[Expr]) -> String {
     if args.is_empty() {
         return "{}".to_string();
     }
@@ -1559,9 +1652,11 @@ fn compile_struct_new(args: &[Expr]) -> String {
 
 /// Compile a type expression. Types can be single symbols or lists.
 ///
-/// (generic T U)            → T, U          (standalone type params)
-/// (Option (generic T U))   → Option<T, U>  (generic type application)
-/// (& T)                    → & T           (reference, space-separated)
+/// (Option i32)            → Option<i32>   (implicit: uppercase head → generic app)
+/// (generic T U)           → T, U          (standalone type params)
+/// (Option (generic T U))  → Option<T, U>  (explicit generic type application)
+/// (& T)                   → & T           (reference, space-separated)
+/// (dyn Trait)             → dyn Trait     (lowercase head → space-separated)
 fn compile_type_expr(expr: &Expr) -> String {
     match expr {
         Expr::List(items, _) if !items.is_empty() => {
@@ -1577,7 +1672,7 @@ fn compile_type_expr(expr: &Expr) -> String {
             if items.len() == 1 {
                 return first;
             }
-            // (Option (generic T U)) → Option<T, U>
+            // (Option (generic T U)) → Option<T, U>  (explicit generic)
             if let Expr::List(generic_items, _) = &items[1]
                 && !generic_items.is_empty()
                 && matches!(&generic_items[0], Expr::Symbol(s) if s == "generic")
@@ -1588,7 +1683,15 @@ fn compile_type_expr(expr: &Expr) -> String {
                     .collect();
                 return format!("{}<{}>", first, params.join(", "));
             }
-            // (& T) → & T, (& 'a str) → & 'a str
+            // Implicit generic application: uppercase head → Option<i32>
+            if first.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+                let params: Vec<_> = items[1..]
+                    .iter()
+                    .map(compile_type_expr)
+                    .collect();
+                return format!("{}<{}>", first, params.join(", "));
+            }
+            // Reference, pointer, etc.: (& T) → & T, (*const T) → *const T
             let rest: Vec<_> = items[1..].iter().map(compile_expr).collect();
             format!("{} {}", first, rest.join(" "))
         }
@@ -1780,7 +1883,7 @@ mod tests {
 
     #[test]
     fn impl_with_methods() {
-        let out = compile_first("(impl Point ((fn new ((x f64) (y f64)) Point (new Point (x x) (y y)))))");
+        let out = compile_first("(impl Point ((fn new ((x f64) (y f64)) Point (raw_new Point (x x) (y y)))))");
         assert!(out.contains("impl Point {"));
         assert!(out.contains("fn new(x: f64, y: f64) -> Point"));
     }
@@ -1904,7 +2007,7 @@ mod tests {
     #[test]
     fn for_with_tuple_destructure() {
         let out = compile_first(
-            "(fn f ((iter (SomeIter))) () (for (i x) in iter (println! \"{}\" i)))",
+            "(fn f ((iter (SomeIter))) () (for ((i x)) in iter (println! \"{}\" i)))",
         );
         assert!(out.contains("for (i, x) in iter {"));
     }
@@ -2105,7 +2208,7 @@ mod tests {
 
     #[test]
     fn struct_construction() {
-        let out = compile_first("(fn f () Point (new Point (x 1.0) (y 2.0)))");
+        let out = compile_first("(fn f () Point (raw_new Point (x 1.0) (y 2.0)))");
         assert!(out.contains("Point { x: 1.0, y: 2.0 }"));
     }
 
@@ -2470,5 +2573,137 @@ mod tests {
         let out = compile_first("(struct (derive Debug) Wrapper (generic T) (where (T Clone)) T)");
         assert!(out.contains("#[derive(Debug)]"));
         assert!(out.contains("struct Wrapper<T>(T) where T: Clone;"));
+    }
+
+    // ——— else-if ———
+
+    #[test]
+    fn else_if_basic() {
+        let out = compile_first("(fn f () () (if (> x 10) (println! \"big\") (else-if (> x 5) (println! \"medium\"))))");
+        assert!(out.contains("else if (x > 5) { println!(\"medium\") }"));
+    }
+
+    #[test]
+    fn else_if_with_else() {
+        let out = compile_first("(fn f () () (if (> x 10) (println! \"big\") (else-if (> x 5) (println! \"medium\") (println! \"small\"))))");
+        assert!(out.contains("else if (x > 5) { println!(\"medium\") } else { println!(\"small\") }"));
+    }
+
+    #[test]
+    fn else_if_chained() {
+        let out = compile_first("(fn f () () (if (> x 10) (a) (else-if (> x 5) (b) (else-if (> x 0) (c) (d)))))");
+        // Should have chained else-if without doubled "else"
+        assert!(!out.contains("else else"));
+        assert!(out.contains("else if (x > 5)"));
+        assert!(out.contains("else if (x > 0)"));
+    }
+
+    #[test]
+    fn else_if_missing_body_warns() {
+        let w = warnings("(fn f () () (if true (x) (else-if)))");
+        assert!(w.iter().any(|m| m.contains("else-if")));
+    }
+
+    // ——— match guards ———
+
+    #[test]
+    fn match_with_guard() {
+        let out = compile_first("(fn f ((x i32)) () (match x (((Some v)) if (> v 0) (println! \"pos\")) (_ ())))");
+        assert!(out.contains("if (v > 0)"));
+        assert!(out.contains("=>"));
+    }
+
+    #[test]
+    fn match_guard_simple_pattern() {
+        let out = compile_first("(fn f ((x i32)) () (match x (_ if (== x 0) (println! \"zero\")) (_ ())))");
+        assert!(out.contains("_ => if (x == 0)"));
+    }
+
+    // ——— implicit type generics ———
+
+    #[test]
+    fn type_implicit_generic_option() {
+        let out = compile_first("(fn f ((x (Option i32))) () ())");
+        assert!(out.contains("x: Option<i32>"));
+    }
+
+    #[test]
+    fn type_implicit_generic_result() {
+        let out = compile_first("(fn f () (Result i32 String) (Ok 42))");
+        assert!(out.contains("Result<i32, String>"));
+    }
+
+    #[test]
+    fn type_reference_still_space_separated() {
+        let out = compile_first("(fn f ((x &i32)) () ())");
+        assert!(out.contains("x: &i32"));
+    }
+
+    // ——— continue without value ———
+
+    #[test]
+    fn continue_with_value_warns() {
+        let w = warnings("(fn f () () (continue 42))");
+        assert!(w.iter().any(|m| m.contains("continue")));
+    }
+
+    #[test]
+    fn continue_without_value() {
+        let out = compile_first("(fn f () () (loop (continue)))");
+        assert!(out.contains("continue"));
+        assert!(!out.contains("continue()"));
+    }
+
+    // ——— for loop validation ———
+
+    #[test]
+    fn for_without_in_warns() {
+        let w = warnings("(fn f () () (for x y (println! \"{}\" x)))");
+        assert!(w.iter().any(|m| m.contains("missing 'in'")));
+    }
+
+    // ——— tuple destructure in for ———
+
+    #[test]
+    fn for_tuple_destructure_double_parens() {
+        let out = compile_first("(fn f ((iter (SomeIter))) () (for ((i x)) in iter (println! \"{}\" i)))");
+        assert!(out.contains("for (i, x) in iter {"));
+    }
+
+    // ——— lowercase enum variant in patterns ———
+
+    #[test]
+    fn match_lowercase_variant_pattern() {
+        let out = compile_first("(fn f ((r (Result i32 String))) () (match r ((ok val) (print val)) ((err e) (print e))))");
+        assert!(out.contains("ok(val)"));
+        assert!(out.contains("err(e)"));
+    }
+
+    #[test]
+    fn for_lowercase_variant_pattern() {
+        let out = compile_first("(fn f ((iter (SomeIter))) () (for (some x) in iter (println! \"{}\" x)))");
+        assert!(out.contains("for some(x) in iter {"));
+    }
+
+    // ——— raw_new ———
+
+    #[test]
+    fn raw_new_basic() {
+        let out = compile_first("(fn f () Point (raw_new Point (x 1.0) (y 2.0)))");
+        assert!(out.contains("Point { x: 1.0, y: 2.0 }"));
+    }
+
+    // ——— `-` as symbol (not number) ———
+
+    #[test]
+    fn minus_is_symbol_in_binary_op() {
+        let out = compile_first("(fn f () i32 (- a b))");
+        assert!(out.contains("(a - b)"));
+    }
+
+    #[test]
+    fn minus_unary() {
+        let out = compile_first("(fn f ((x i32)) i32 (- x))");
+        assert!(out.contains("-(x)"));
     }
 }

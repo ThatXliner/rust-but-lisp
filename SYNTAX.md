@@ -22,7 +22,9 @@
 | `(loop (body))` | `loop { body }` |
 | `(while cond (body))` | `while cond { body }` |
 | `(for x in iter (body))` | `for x in iter { body }` |
-| `(new Type (field1 val1) (field2 val2))` | `Type { field1: val1, field2: val2 }` |
+| `(for ((i x)) in iter (body))` | `for (i, x) in iter { body }` (tuple destructure) |
+| `(for (Some x) in iter (body))` | `for Some(x) in iter { body }` (enum pattern) |
+| `(raw_new Type (field1 val1) (field2 val2))` | `Type { field1: val1, field2: val2 }` |
 | `(lambda (x y) (+ x y))` | `\|x, y\| { x + y }` |
 | `(lambda ((x i32) (y i32)) i32 (* x y))` | `\|x: i32, y: i32\| -> i32 { x * y }` |
 | `(foo! args)` | `foo!(args)` |
@@ -47,6 +49,8 @@
 | `(if-let (Some v) x (body) (else))` | `if let Some(v) = x { body } else { else }` |
 | `(while-let (Some v) iter (body))` | `while let Some(v) = iter { body }` |
 | `(unsafe (body))` | `unsafe { body }` |
+| `(if a b (else-if c d e))` | `if a { b } else if c { d } else { e }` (else-if chain) |
+| `((Some x) if (> x 0) body)` | `Some(x) if (x > 0) => { body }` (match guard) |
 | `(generic (T Display) K)` | `<T: Display, K>` |
 | `(where (T Display Clone) ('a 'b))` | `where T: Display + Clone, 'a: 'b` |
 | `(struct (derive Debug Clone) Point (x i32))` | `#[derive(Debug, Clone)] struct Point { x: i32 }` |
@@ -197,26 +201,30 @@ Parameters use named-tuple syntax: `(name type1 type2...)`:
 
 ## Struct initialization
 
-`(new Type)` becomes `Type::new()` when the Type is lowercase (function call), or `Type { ... }` with named fields:
+`(raw_new Type (field val)...)` emits struct literal syntax. For `Type::new()` calls use the regular function call syntax `(Type::new)`.
 
 ```lisp
-(new Point (x 1.0) (y 2.0))   →  Point { x: 1.0, y: 2.0 }
-(new Vec)                       →  Vec::new()
+(raw_new Point (x 1.0) (y 2.0))   →  Point { x: 1.0, y: 2.0 }
+(Vec::new)                          →  Vec::new()
 ```
 
 ## Pattern matching
 
-`match` arm patterns follow the same s-expression structure:
+`match` arm patterns follow the same s-expression structure. Tuple destructure uses double parens:
 
 ```lisp
 (match val
   ((Some x) (println! "{}" x))
   (None (println! "nothing")))
 
-;; With guards
+;; Tuple destructure with double parens
 (match pair
-  ((x y) if (> x 0) (println! "positive first"))
-  ((x y) (println! "non-positive first")))
+  (((x y)) (println! "{} {}" x y)))
+
+;; Match guards: place `if` after the pattern
+(match pair
+  (((x y)) if (> x 0) (println! "positive first: {} {}" x y))
+  (((x y)) (println! "non-positive first: {} {}" x y)))
 ```
 
 ## Inline Rust
@@ -251,4 +259,41 @@ Drop into raw Rust with `(rust "...")`. The string is emitted verbatim:
 (do (side-effect!)
     (another!)
     result-value)   →  { side_effect!(); another!(); result_value }
+```
+
+## Else-if chains
+
+Use `else-if` in the else position of `if` for chained conditions:
+
+```lisp
+(if (> x 10)
+    (println! "big")
+    (else-if (> x 5)
+      (println! "medium")
+      (println! "small")))
+
+;; →  if (x > 10) { println!("big") } else if (x > 5) { println!("medium") } else { println!("small") }
+```
+
+`else-if` chains can be arbitrarily deep:
+
+```lisp
+(if cond1 then1
+  (else-if cond2 then2
+    (else-if cond3 then3
+      catch-all)))
+```
+
+## For-loop patterns
+
+For-loop patterns use the same syntax as match patterns. Tuple destructure requires double parens:
+
+```lisp
+;; Tuple destructure (double parens)
+(for ((i val)) in iter (println! "{}: {}" i val))
+;; →  for (i, val) in iter { println!("{}: {}", i, val) }
+
+;; Enum variant pattern (single parens)
+(for (Some x) in iter (println! "{}" x))
+;; →  for Some(x) in iter { println!("{}", x) }
 ```
