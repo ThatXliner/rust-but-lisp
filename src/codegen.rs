@@ -687,9 +687,9 @@ fn compile_match_arm(expr: &Expr) -> String {
             };
             let body = compile_body(&items[body_start..]);
             if body.is_empty() {
-                format!("{} =>{} {{}}", pattern, guard)
+                format!("{}{} => {{}}", pattern, guard)
             } else {
-                format!("{} =>{} {{ {} }}", pattern, guard, body)
+                format!("{}{} => {{ {} }}", pattern, guard, body)
             }
         }
         Expr::List(items, _) if items.len() == 1 => {
@@ -2608,15 +2608,14 @@ mod tests {
 
     #[test]
     fn match_with_guard() {
-        let out = compile_first("(fn f ((x i32)) () (match x (((Some v)) if (> v 0) (println! \"pos\")) (_ ())))");
-        assert!(out.contains("if (v > 0)"));
-        assert!(out.contains("=>"));
+        let out = compile_first("(fn f ((x (Option i32))) () (match x ((Some v) if (> v 0) (println! \"pos\")) (_ ())))");
+        assert!(out.contains("Some(v) if (v > 0) =>"));
     }
 
     #[test]
     fn match_guard_simple_pattern() {
         let out = compile_first("(fn f ((x i32)) () (match x (_ if (== x 0) (println! \"zero\")) (_ ())))");
-        assert!(out.contains("_ => if (x == 0)"));
+        assert!(out.contains("_ if (x == 0) =>"));
     }
 
     // ——— implicit type generics ———
