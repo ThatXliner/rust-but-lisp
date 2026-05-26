@@ -245,7 +245,7 @@ fn compile_list(items: &[Expr]) -> String {
     // Check for special forms
     if let Expr::Symbol(s) = head {
         match s.as_str() {
-            "do" => return compile_do(&items[1..]),
+            "do" | "block" | "progn" | "begin" => return compile_do(&items[1..]),
             "let" => return compile_let(&items[1..]),
             "if" => return compile_if(&items[1..]),
             "match" => return compile_match(&items[1..]),
@@ -2354,6 +2354,18 @@ mod tests {
         let out = compile_first("(fn f () () (do (println! \"a\") (println! \"b\")))");
         assert!(out.contains("println!(\"a\");"));
         assert!(out.contains("println!(\"b\")"));
+    }
+
+    #[test]
+    fn block_aliases_compile_like_do() {
+        for form in ["block", "progn", "begin"] {
+            let out = compile_first(&format!(
+                "(fn f () () ({} (println! \"a\") (println! \"b\")))",
+                form
+            ));
+            assert!(out.contains("println!(\"a\");"));
+            assert!(out.contains("println!(\"b\")"));
+        }
     }
 
     #[test]

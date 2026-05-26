@@ -284,14 +284,17 @@ Drop into raw Rust with `(rust "...")`. The string is emitted verbatim:
   (rust "*ptr"))
 ```
 
-## Do blocks
+## Block expressions
 
-`(do expr1 expr2 ... exprN)` emits a block with semicolons after all but the last expression:
+`(do expr1 expr2 ... exprN)` emits a block with semicolons after all but the last expression. `block`, `progn`, and `begin` are equivalent aliases:
 
 ```lisp
 (do (side-effect!)
     (another!)
     result-value)   →  { side_effect!(); another!(); result_value }
+
+(progn (side-effect!)
+       result-value)
 ```
 
 ## Else-if chains
