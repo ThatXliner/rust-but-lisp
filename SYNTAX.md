@@ -215,6 +215,14 @@ Typed `let` bindings use the same wrapped target shape:
 (let mut (total i32) 0)     ;; let mut total: i32 = 0;
 ```
 
+Multiple bindings use a wrapped binding list and emit sequential Rust `let` statements, so later bindings can reference earlier ones:
+
+```lisp
+(let ((x 1)
+      (y i32 (+ x 1)))
+  (+ x y))
+```
+
 Untyped `let` bindings accept exactly one initializer expression. If the initializer needs multiple steps, wrap them in `(do ...)` so the block is explicit:
 
 ```lisp

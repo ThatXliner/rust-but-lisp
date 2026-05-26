@@ -437,12 +437,53 @@ fn compile_lambda(args: &[Expr]) -> String {
 ///
 /// Untyped bindings use `(let name value)`.
 /// Typed bindings make the binding target explicit: `(let (name Type) value)`.
+/// Multi-let bindings use `(let ((x value) (y Type value)) body...)`.
 fn compile_let(args: &[Expr]) -> String {
     if args.is_empty() {
         warn("let binding with no name or value");
         return "let _ = ()".to_string();
     }
 
+    if let Some(block) = compile_multi_let(args) {
+        return block;
+    }
+
+    compile_single_let(args)
+}
+
+fn compile_multi_let(args: &[Expr]) -> Option<String> {
+    let Expr::List(bindings, _) = &args[0] else {
+        return None;
+    };
+
+    if !bindings.iter().all(|binding| matches!(binding, Expr::List(_, _))) {
+        return None;
+    }
+
+    let mut parts: Vec<String> = Vec::new();
+    if bindings.is_empty() {
+        warn("multi-let binding list is empty");
+    }
+
+    for binding in bindings {
+        if let Expr::List(items, _) = binding {
+            parts.push(format!("{};", compile_let_binding(items)));
+        }
+    }
+
+    if args.len() == 1 {
+        warn("multi-let missing body");
+    } else {
+        let body = compile_body(&args[1..]);
+        if !body.is_empty() {
+            parts.push(body);
+        }
+    }
+
+    Some(format!("{{\n{}\n}}", indent(&parts.join("\n"))))
+}
+
+fn compile_single_let(args: &[Expr]) -> String {
     let mut i = 0;
     let mut mutable = false;
 
@@ -497,6 +538,77 @@ fn compile_let(args: &[Expr]) -> String {
         format!("let {}{}: {} = {}", mut_str, register_ident(name), t, value)
     } else {
         format!("let {}{} = {}", mut_str, register_ident(name), value)
+    }
+}
+
+fn compile_let_binding(args: &[Expr]) -> String {
+    if args.is_empty() {
+        warn("multi-let binding is empty");
+        return "let _ = ()".to_string();
+    }
+
+    let mut i = 0;
+    let mut mutable = false;
+
+    if let Expr::Symbol(s) = &args[0]
+        && s == "mut" {
+            mutable = true;
+            i += 1;
+        }
+
+    if i >= args.len() {
+        warn("multi-let binding missing name after mut");
+        return "let _ = ()".to_string();
+    }
+
+    let target = &args[i];
+    i += 1;
+
+    let (name, mut type_ann) = match parse_let_target(target) {
+        Some(parsed) => parsed,
+        None => return "let _ = ()".to_string(),
+    };
+
+    if type_ann.is_none() && args.len() - i == 2 {
+        type_ann = Some(compile_type_expr(&args[i]));
+        i += 1;
+    }
+
+    if i >= args.len() {
+        warn("multi-let binding missing value");
+        return format!(
+            "let {}{} = ()",
+            if mutable { "mut " } else { "" },
+            register_ident(name)
+        );
+    }
+
+    if args.len() - i > 1 {
+        warn("multi-let binding value must be a single expression");
+        return format!("/* malformed multi-let binding: {:?} */", args);
+    }
+
+    let value = compile_expr(&args[i]);
+    let mut_str = if mutable { "mut " } else { "" };
+    if let Some(t) = type_ann {
+        format!("let {}{}: {} = {}", mut_str, register_ident(name), t, value)
+    } else {
+        format!("let {}{} = {}", mut_str, register_ident(name), value)
+    }
+}
+
+fn parse_let_target(target: &Expr) -> Option<(&Expr, Option<String>)> {
+    match target {
+        Expr::List(parts, _) if parts.len() >= 2 => {
+            let type_parts: Vec<String> = parts[1..].iter().map(compile_type_expr).collect();
+            Some((&parts[0], Some(type_parts.join(" "))))
+        }
+        Expr::List(parts, _) if parts.len() == 1 => Some((&parts[0], None)),
+        Expr::List(_, _) => {
+            warn("let binding target cannot be an empty list");
+            None
+        }
+        _ => Some((target, None)),
     }
 }
 
@@ -1969,6 +2081,20 @@ mod tests {
     fn let_multiple_values_warns() {
         let w = warnings("(fn f () i32 (let x 42 y) x)");
         assert!(w.iter().any(|m| m.contains("single expression")));
+    }
+
+    #[test]
+    fn multi_let_compiles_sequential_bindings() {
+        let out = compile_first("(fn f () i32 (let ((x 1) (y i32 (+ x 1))) (+ x y)))");
+        assert!(out.contains("{\n        let x = 1;\n        let y: i32 = (x + 1);"));
+        assert!(out.contains("(x + y)"));
+    }
+
+    #[test]
+    fn multi_let_supports_wrapped_typed_targets() {
+        let out = compile_first("(fn f () i32 (let (((x i32) 1) (mut (y i32) (+ x 1))) (+ x y)))");
+        assert!(out.contains("let x: i32 = 1;"));
+        assert!(out.contains("let mut y: i32 = (x + 1);"));
     }
 
     #[test]
