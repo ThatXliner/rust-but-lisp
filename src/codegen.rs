@@ -1684,7 +1684,6 @@ fn compile_raw_new(args: &[Expr]) -> String {
 
 /// Compile a type expression. Types can be single symbols or lists.
 ///
-/// (Option i32)            → Option<i32>   (implicit: uppercase head → generic app)
 /// (generic T U)           → T, U          (standalone type params)
 /// (Option (generic T U))  → Option<T, U>  (explicit generic type application)
 /// (& T)                   → & T           (reference, space-separated)
@@ -1710,14 +1709,6 @@ fn compile_type_expr(expr: &Expr) -> String {
                 && matches!(&generic_items[0], Expr::Symbol(s) if s == "generic")
             {
                 let params: Vec<_> = generic_items[1..]
-                    .iter()
-                    .map(compile_type_expr)
-                    .collect();
-                return format!("{}<{}>", first, params.join(", "));
-            }
-            // Implicit generic application: uppercase head → Option<i32>
-            if first.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
-                let params: Vec<_> = items[1..]
                     .iter()
                     .map(compile_type_expr)
                     .collect();
@@ -2013,7 +2004,7 @@ mod tests {
     #[test]
     fn match_with_arms_compiles() {
         let out =
-            compile_first("(fn f ((opt (Option i32))) () (match opt ((Some x) (print x)) (None ())))");
+            compile_first("(fn f ((opt (Option (generic i32)))) () (match opt ((Some x) (print x)) (None ())))");
         assert!(out.contains("match opt {"));
         assert!(out.contains("Some(x) => { print(x) }"));
     }
@@ -2396,19 +2387,19 @@ mod tests {
 
     #[test]
     fn if_let_simple() {
-        let out = compile_first("(fn f ((x (Option i32))) () (if-let (Some v) x (println! \"{}\" v)))");
+        let out = compile_first("(fn f ((x (Option (generic i32)))) () (if-let (Some v) x (println! \"{}\" v)))");
         assert!(out.contains("if let Some(v) = x"));
     }
 
     #[test]
     fn if_let_with_else() {
-        let out = compile_first("(fn f ((x (Option i32))) () (if-let (Some v) x (println! \"{}\" v) (println! \"none\")))");
+        let out = compile_first("(fn f ((x (Option (generic i32)))) () (if-let (Some v) x (println! \"{}\" v) (println! \"none\")))");
         assert!(out.contains("else"));
     }
 
     #[test]
     fn while_let_simple() {
-        let out = compile_first("(fn f ((iter &mut (Iter i32))) () (while-let (Some v) ((. iter next)) (println! \"{}\" v)))");
+        let out = compile_first("(fn f ((iter &mut (Iter (generic i32)))) () (while-let (Some v) ((. iter next)) (println! \"{}\" v)))");
         assert!(out.contains("while let Some(v) = iter.next()"));
     }
 
@@ -2666,7 +2657,7 @@ mod tests {
 
     #[test]
     fn match_with_guard() {
-        let out = compile_first("(fn f ((x (Option i32))) () (match x ((Some v) if (> v 0) (println! \"pos\")) (_ ())))");
+        let out = compile_first("(fn f ((x (Option (generic i32)))) () (match x ((Some v) if (> v 0) (println! \"pos\")) (_ ())))");
         assert!(out.contains("Some(v) if (v > 0) =>"));
     }
 
@@ -2676,18 +2667,25 @@ mod tests {
         assert!(out.contains("_ if (x == 0) =>"));
     }
 
-    // ——— implicit type generics ———
+    // ——— explicit type generics ———
 
     #[test]
-    fn type_implicit_generic_option() {
-        let out = compile_first("(fn f ((x (Option i32))) () ())");
+    fn type_explicit_generic_option() {
+        let out = compile_first("(fn f ((x (Option (generic i32)))) () ())");
         assert!(out.contains("x: Option<i32>"));
     }
 
     #[test]
-    fn type_implicit_generic_result() {
-        let out = compile_first("(fn f () (Result i32 String) (Ok 42))");
+    fn type_explicit_generic_result() {
+        let out = compile_first("(fn f () (Result (generic i32 String)) (Ok 42))");
         assert!(out.contains("Result<i32, String>"));
+    }
+
+    #[test]
+    fn uppercase_type_application_is_not_implicit_generic() {
+        let out = compile_first("(fn f ((x (Option i32))) () ())");
+        assert!(out.contains("x: Option i32"));
+        assert!(!out.contains("x: Option<i32>"));
     }
 
     #[test]
@@ -2731,7 +2729,7 @@ mod tests {
 
     #[test]
     fn match_lowercase_variant_pattern() {
-        let out = compile_first("(fn f ((r (Result i32 String))) () (match r ((ok val) (print val)) ((err e) (print e))))");
+        let out = compile_first("(fn f ((r (Result (generic i32 String)))) () (match r ((ok val) (print val)) ((err e) (print e))))");
         assert!(out.contains("ok(val)"));
         assert!(out.contains("err(e)"));
     }

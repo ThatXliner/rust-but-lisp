@@ -66,6 +66,8 @@ rlisp run file.lisp       # transpile, compile, and run
 
 Binary operators (`+`, `-`, `*`, `/`, `==`, etc.) emit infix: `(+ a b)` → `(a + b)`, `(+ a b c)` → `(a + b + c)`.
 
+Generic type application is explicit: `(Option (generic i32))` → `Option<i32>`.
+
 Kebab-case identifiers with hyphens are converted to `__` (double underscore): `page-header` → `page__header`. Collisions (e.g. `foo-bar` and `foo__bar` both → `foo__bar`) emit a warning.
 
 Typed `let` bindings are explicit: wrap the binding target as `(name Type)`, as in `(let (count usize) 0)`. Bare `let` accepts one value expression only; use `(do ...)` when the initializer needs multiple steps.

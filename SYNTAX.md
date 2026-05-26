@@ -71,6 +71,13 @@ Generics are introduced with the `generic` command:
 (fn first (generic T) ((list &[T])) &T)  ;; fn first<T>(list: &[T]) -> &T
 ```
 
+Generic type application is explicit:
+
+```lisp
+(Option (generic i32))          ;; Option<i32>
+(Result (generic i32 String))   ;; Result<i32, String>
+```
+
 ### Inline trait bounds
 
 Bounds on generic parameters use a list where the first element is the parameter name and the rest are bounds joined by ` + `:
