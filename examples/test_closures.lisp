@@ -3,7 +3,7 @@
   (add 1 2))
 
 (fn typed_closure () i32
-  (let mul (lambda ((x i32) (y i32)) i32 (* x y)))
+  (let mul (lambda ((x i32) (y i32)) -> i32 (* x y)))
   (mul 3 4))
 
 (fn move_closure () ()

@@ -137,7 +137,7 @@ Think of `quasiquote` as "return this exact s-expression, except for the `unquot
 (let add (lambda (x y) (+ x y)))
 
 ;; typed with return type
-(let mul (lambda ((x i32) (y i32)) i32 (* x y)))
+(let mul (lambda ((x i32) (y i32)) -> i32 (* x y)))
 
 ;; move closure
 (let s "hello")

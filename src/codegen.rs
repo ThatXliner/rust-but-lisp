@@ -363,10 +363,10 @@ fn compile_fn_def(attrs: &str, args: &[Expr], vis: &str) -> String {
 
 /// Compile a closure expression.
 ///
-/// (lambda (x y) (+ x y))                           => |x, y| { (x + y) }
-/// (lambda ((x i32) (y i32)) i32 (+ x y))           => |x: i32, y: i32| -> i32 { (x + y) }
-/// (lambda move (x) x)                              => move |x| { x }
-/// (lambda move ((x i32) (y i32)) i32 (+ x y))      => move |x: i32, y: i32| -> i32 { (x + y) }
+/// (lambda (x y) (+ x y))                              => |x, y| { (x + y) }
+/// (lambda ((x i32) (y i32)) -> i32 (+ x y))           => |x: i32, y: i32| -> i32 { (x + y) }
+/// (lambda move (x) x)                                 => move |x| { x }
+/// (lambda move ((x i32) (y i32)) -> i32 (+ x y))      => move |x: i32, y: i32| -> i32 { (x + y) }
 fn compile_lambda(args: &[Expr]) -> String {
     if args.is_empty() {
         return "|| {}".to_string();
@@ -408,15 +408,16 @@ fn compile_lambda(args: &[Expr]) -> String {
     };
     i += 1;
 
-    // Parse optional return type (only for typed params)
-    let ret_type = if typed && i < args.len() {
-        // If there's more than one expr left, the next is the return type
-        if i + 1 < args.len() {
-            let ret = compile_type_expr(&args[i]);
+    // Parse optional return type marker.
+    let ret_type = if i < args.len() && is_lambda_return_marker(&args[i]) {
+        if i + 1 >= args.len() {
+            warn("lambda return marker missing return type");
             i += 1;
-            format!(" -> {}", ret)
-        } else {
             String::new()
+        } else {
+            let ret = compile_type_expr(&args[i + 1]);
+            i += 2;
+            format!(" -> {}", ret)
         }
     } else {
         String::new()
@@ -431,6 +432,10 @@ fn compile_lambda(args: &[Expr]) -> String {
     };
 
     format!("{}|{}|{} {}", move_kw, params, ret_type, body_str)
+}
+
+fn is_lambda_return_marker(expr: &Expr) -> bool {
+    matches!(expr, Expr::Symbol(s) if s == "->" || s == ":")
 }
 
 /// Compile let binding.
@@ -2197,9 +2202,24 @@ mod tests {
     #[test]
     fn lambda_typed() {
         let out = compile_first(
-            "(fn f () i32 (let mul (lambda ((x i32) (y i32)) i32 (* x y))) (mul 3 4))",
+            "(fn f () i32 (let mul (lambda ((x i32) (y i32)) -> i32 (* x y))) (mul 3 4))",
         );
         assert!(out.contains("|x: i32, y: i32| -> i32 {"));
+    }
+
+    #[test]
+    fn lambda_typed_return_requires_marker() {
+        let out = compile_first(
+            "(fn f () i32 (let mul (lambda ((x i32) (y i32)) i32 (* x y))) (mul 3 4))",
+        );
+        assert!(!out.contains("|x: i32, y: i32| -> i32 {"));
+        assert!(out.contains("i32;"));
+    }
+
+    #[test]
+    fn lambda_colon_return_marker() {
+        let out = compile_first("(fn f () i32 (let id (lambda ((x i32)) : i32 x)) (id 4))");
+        assert!(out.contains("|x: i32| -> i32 {"));
     }
 
     #[test]

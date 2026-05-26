@@ -27,7 +27,7 @@
 | `(for (Some x) in iter (body))` | `for Some(x) in iter { body }` (enum pattern) |
 | `(raw_new Type (field1 val1) (field2 val2))` | `Type { field1: val1, field2: val2 }` |
 | `(lambda (x y) (+ x y))` | `\|x, y\| { x + y }` |
-| `(lambda ((x i32) (y i32)) i32 (* x y))` | `\|x: i32, y: i32\| -> i32 { x * y }` |
+| `(lambda ((x i32) (y i32)) -> i32 (* x y))` | `\|x: i32, y: i32\| -> i32 { x * y }` |
 | `(foo! args)` | `foo!(args)` |
 | `(println! "{}" x)` | `println!("{}", x)` |
 | `(pub fn foo () i32 42)` | `pub fn foo() -> i32 { 42 }` |
