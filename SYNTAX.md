@@ -5,9 +5,10 @@
 | LISP | Rust |
 |------|------|
 | `(fn add ((x i32) (y i32)) i32 (+ x y))` | `fn add(x: i32, y: i32) -> i32 { (x + y) }` |
-| `(let x i32 42)` | `let x: i32 = 42;` |
+| `(let (x i32) 42)` | `let x: i32 = 42;` |
 | `(let x 42)` | `let x = 42;` |
 | `(let mut x 42)` | `let mut x = 42;` |
+| `(let mut (x i32) 42)` | `let mut x: i32 = 42;` |
 | `(struct Point (x f64) (y f64))` | `struct Point { x: f64, y: f64 }` |
 | `(struct Pair f64 f64)` | `struct Pair(f64, f64);` |
 | `(struct Unit)` | `struct Unit;` |
@@ -198,6 +199,22 @@ Parameters use named-tuple syntax: `(name type1 type2...)`:
 
 (fn mut-ref ((x &mut i32)) ()         ;; mutable reference
   (*= x 2))
+```
+
+Typed `let` bindings use the same wrapped target shape:
+
+```lisp
+(let (count usize) 0)       ;; let count: usize = 0;
+(let mut (total i32) 0)     ;; let mut total: i32 = 0;
+```
+
+Untyped `let` bindings accept exactly one initializer expression. If the initializer needs multiple steps, wrap them in `(do ...)` so the block is explicit:
+
+```lisp
+(let result
+  (do
+    (println! "computing")
+    (+ x y)))
 ```
 
 ## Struct initialization

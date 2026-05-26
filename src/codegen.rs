@@ -434,6 +434,9 @@ fn compile_lambda(args: &[Expr]) -> String {
 }
 
 /// Compile let binding.
+///
+/// Untyped bindings use `(let name value)`.
+/// Typed bindings make the binding target explicit: `(let (name Type) value)`.
 fn compile_let(args: &[Expr]) -> String {
     if args.is_empty() {
         warn("let binding with no name or value");
@@ -458,16 +461,36 @@ fn compile_let(args: &[Expr]) -> String {
     let name = &args[i];
     i += 1;
 
-    // Determine if there's a type annotation
-    let (type_ann, value_start) = if i + 1 < args.len() {
-        // If there's more than one expr remaining, the next one might be a type
-        // Heuristic: treat the next expr as a type (it will be)
-        (Some(compile_type_expr(&args[i])), i + 1)
-    } else {
-        (None, i)
+    let (name, type_ann) = match name {
+        Expr::List(parts, _) if parts.len() >= 2 => {
+            let type_parts: Vec<String> = parts[1..].iter().map(compile_type_expr).collect();
+            (&parts[0], Some(type_parts.join(" ")))
+        }
+        Expr::List(parts, _) if parts.len() == 1 => (&parts[0], None),
+        Expr::List(_, _) => {
+            warn("let binding target cannot be an empty list");
+            return "let _ = ()".to_string();
+        }
+        _ => (name, None),
     };
 
-    let value = compile_body(&args[value_start..]);
+    if i >= args.len() {
+        warn("let binding missing value");
+        return format!(
+            "let {}{} = ()",
+            if mutable { "mut " } else { "" },
+            register_ident(name)
+        );
+    }
+
+    if args.len() - i > 1 {
+        warn(
+            "let binding value must be a single expression; use (do ...) for multiple expressions or (let (name Type) value) for a typed binding",
+        );
+        return format!("/* malformed let: {:?} */", args);
+    }
+
+    let value = compile_expr(&args[i]);
 
     let mut_str = if mutable { "mut " } else { "" };
     if let Some(t) = type_ann {
@@ -1922,7 +1945,7 @@ mod tests {
 
     #[test]
     fn let_typed() {
-        let out = compile_first("(fn f () i32 (let x i32 42) x)");
+        let out = compile_first("(fn f () i32 (let (x i32) 42) x)");
         assert!(out.contains("let x: i32 = 42;"));
     }
 
@@ -1936,6 +1959,25 @@ mod tests {
     fn let_with_expression_value() {
         let out = compile_first("(fn f () i32 (let x (+ 1 2)) x)");
         assert!(out.contains("let x = (1 + 2);"));
+    }
+
+    #[test]
+    fn let_mut_typed() {
+        let out = compile_first("(fn f () i32 (let mut (x i32) 0) x)");
+        assert!(out.contains("let mut x: i32 = 0;"));
+    }
+
+    #[test]
+    fn let_no_longer_treats_second_value_as_type() {
+        let out = compile_first("(fn f () i32 (let x 42 y) x)");
+        assert!(!out.contains("let x: 42 = y"));
+        assert!(out.contains("/* malformed let:"));
+    }
+
+    #[test]
+    fn let_multiple_values_warns() {
+        let w = warnings("(fn f () i32 (let x 42 y) x)");
+        assert!(w.iter().any(|m| m.contains("single expression")));
     }
 
     #[test]

@@ -51,6 +51,7 @@ rlisp run file.lisp       # transpile, compile, and run
 |------|------|
 | `(fn add ((x i32) (y i32)) i32 (+ x y))` | `fn add(x: i32, y: i32) -> i32 { (x + y) }` |
 | `(let x 42)` / `(let mut x 42)` | `let x = 42;` / `let mut x = 42;` |
+| `(let (x i32) 42)` / `(let mut (x i32) 42)` | `let x: i32 = 42;` / `let mut x: i32 = 42;` |
 | `(struct Point (x f64) (y f64))` | `struct Point { x: f64, y: f64 }` |
 | `(enum Option (generic T) (Some T) None)` | `enum Option<T> { Some(T), None }` |
 | `(match val ((Some x) (handle x)) (None ()))` | `match val { Some(x) => { handle(x) }, None => { } }` |
@@ -66,6 +67,8 @@ rlisp run file.lisp       # transpile, compile, and run
 Binary operators (`+`, `-`, `*`, `/`, `==`, etc.) emit infix: `(+ a b)` → `(a + b)`, `(+ a b c)` → `(a + b + c)`.
 
 Kebab-case identifiers with hyphens are converted to `__` (double underscore): `page-header` → `page__header`. Collisions (e.g. `foo-bar` and `foo__bar` both → `foo__bar`) emit a warning.
+
+Typed `let` bindings are explicit: wrap the binding target as `(name Type)`, as in `(let (count usize) 0)`. Bare `let` accepts one value expression only; use `(do ...)` when the initializer needs multiple steps.
 
 **Full reference:** [SYNTAX.md](SYNTAX.md) covers generics, lifetimes, visibility, modules, turbofish, inline Rust, const/static, if-let, while-let, else-if, match guards, derive, where clauses, supertraits, associated types, type aliases, and more.
 
