@@ -46,7 +46,7 @@ Pretty diagnostics with [Ariadne](https://codeberg.org/zesterer/ariadne):
 
 ```bash
 git clone https://github.com/ThatXliner/rust-but-lisp.git
-cd rlisp
+cd rust-but-lisp
 cargo install --path .
 ```
 
