@@ -1,4 +1,12 @@
-# rlisp
+<h1 align="center">(rlisp)</h1>
+
+<p align="center"><strong>Rust, but LISP.</strong></p>
+
+<p align="center">
+  <a href="https://github.com/ThatXliner/rust-but-lisp/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/ThatXliner/rust-but-lisp?style=flat&color=f74c00"></a>
+  <img alt="Rust edition 2024" src="https://img.shields.io/badge/rust-edition%202024-b58cff">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-3a322d"></a>
+</p>
 
 > **Hello, Hacker News.** You're not wrong. This is a weekend project, not a production compiler — some Rust syntax is missing (turbofish is fixed now, lifetime bounds are on the list). The point isn't completeness; it's exploring what happens when you bolt Lisp macros onto Rust semantics. If that sounds interesting, read on. If you're looking for something to be mad about, [the issue tracker is open](https://github.com/ThatXliner/rust-but-lisp/issues).
 
