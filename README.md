@@ -1,4 +1,17 @@
-# rlisp
+<h1 align="center">(rlisp)</h1>
+
+<p align="center"><strong>Rust, but LISP.</strong></p>
+
+<p align="center">
+  <a href="https://github.com/ThatXliner/rust-but-lisp/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/ThatXliner/rust-but-lisp?style=flat&color=f74c00"></a>
+  <img alt="Rust edition 2024" src="https://img.shields.io/badge/rust-edition%202024-b58cff">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-3a322d"></a>
+</p>
+
+<p align="center">
+  <a href="brag-output/brag.mp4"><img src="brag-output/brag.jpg" alt="Watch the 20-second rlisp video" width="720"></a>
+  <br><sub><a href="brag-output/brag.mp4">▶ Watch the 20-second video</a></sub>
+</p>
 
 > **Hello, Hacker News.** You're not wrong. This is a weekend project, not a production compiler — some Rust syntax is missing (turbofish is fixed now, lifetime bounds are on the list). The point isn't completeness; it's exploring what happens when you bolt Lisp macros onto Rust semantics. If that sounds interesting, read on. If you're looking for something to be mad about, [the issue tracker is open](https://github.com/ThatXliner/rust-but-lisp/issues).
 
@@ -9,11 +22,11 @@ Rust semantics in LISP syntax. Write s-expressions, output Rust source: `(s-expr
   (x f64)
   (y f64))
 
-(impl Point
+(impl Point (
   (fn distance ((&self) (other &Point)) f64
     (let dx (- (. self x) (. other x)))
     (let dy (- (. self y) (. other y)))
-    (. (+ (. dx powf 2.0) (. dy powf 2.0)) sqrt)))
+    ((. (+ (. dx powf 2.0) (. dy powf 2.0)) sqrt)))))
 
 (fn main () ()
   (let p1 (raw_new Point (x 0.0) (y 0.0)))
@@ -33,7 +46,7 @@ Pretty diagnostics with [Ariadne](https://codeberg.org/zesterer/ariadne):
 
 ```bash
 git clone https://github.com/ThatXliner/rust-but-lisp.git
-cd rlisp
+cd rust-but-lisp
 cargo install --path .
 ```
 
