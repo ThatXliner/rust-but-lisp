@@ -8,6 +8,11 @@
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-3a322d"></a>
 </p>
 
+<p align="center">
+  <a href="brag-output/brag.mp4"><img src="brag-output/brag.jpg" alt="Watch the 20-second rlisp video" width="720"></a>
+  <br><sub><a href="brag-output/brag.mp4">▶ Watch the 20-second video</a></sub>
+</p>
+
 > **Hello, Hacker News.** You're not wrong. This is a weekend project, not a production compiler — some Rust syntax is missing (turbofish is fixed now, lifetime bounds are on the list). The point isn't completeness; it's exploring what happens when you bolt Lisp macros onto Rust semantics. If that sounds interesting, read on. If you're looking for something to be mad about, [the issue tracker is open](https://github.com/ThatXliner/rust-but-lisp/issues).
 
 Rust semantics in LISP syntax. Write s-expressions, output Rust source: `(s-expr → .rs → binary)`.
