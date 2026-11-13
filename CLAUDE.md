@@ -10,7 +10,7 @@ rlisp — Rust semantics in LISP syntax. A transpiler: s-expressions → `.rs` �
 
 ```bash
 cargo build              # compile the transpiler
-cargo test               # run all tests (~70 unit tests across parser, codegen, macros)
+cargo test               # run all tests (inline #[test] modules in src/)
 cargo install --path .   # install the `rlisp` binary
 
 # After installing:
